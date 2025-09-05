@@ -1,6 +1,6 @@
 # 実装計画
 
-- [ ] 1. Python仮想環境とプロジェクト基盤の構築
+- [x] 1. Python仮想環境とプロジェクト基盤の構築
   - uvを使用してPython仮想環境を作成し、プロジェクトを初期化する
   - pyproject.tomlファイルを作成し、必要な依存関係（streamlit、beautifulsoup4、requests、pathlib）を定義する
   - 仮想環境内に依存関係をインストールし、開発環境を整備する
