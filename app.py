@@ -1051,6 +1051,14 @@ class WebScraper:
             # 既知のネットワークエラーは再発生させる
             raise
             
+        except requests.exceptions.MissingSchema as e:
+            logger.warning(f"⚠️ 無効なURL形式: {url}")
+            raise ValueError(f"無効なURL形式です: {url}")
+        
+        except requests.exceptions.InvalidURL as e:
+            logger.warning(f"⚠️ 無効なURL: {url}")
+            raise ValueError(f"無効なURLです: {url}")
+        
         except Exception as e:
             logger.error(f"❌ 予期しないページ取得エラー: {url} - {str(e)}")
             raise Exception(f"予期しないエラーが発生しました: {str(e)}")
@@ -2245,6 +2253,271 @@ def validate_directory_path(directory_path: str) -> tuple[bool, str]:
         
     except Exception as e:
         return False, f"ディレクトリ検証エラー: {str(e)}"
+
+
+def handle_edge_cases_and_errors(bookmarks: List[Bookmark]) -> Dict[str, Any]:
+    """
+    Task 12: エッジケースとエラーの包括的な処理
+    
+    Args:
+        bookmarks: ブックマーク一覧
+        
+    Returns:
+        Dict[str, Any]: 処理結果とエラー情報
+    """
+    result = {
+        'valid_bookmarks': [],
+        'invalid_bookmarks': [],
+        'edge_cases': {
+            'empty_urls': [],
+            'invalid_urls': [],
+            'domain_roots': [],
+            'long_titles': [],
+            'special_characters': []
+        },
+        'statistics': {
+            'total': len(bookmarks),
+            'valid': 0,
+            'invalid': 0,
+            'edge_cases_count': 0
+        }
+    }
+    
+    for bookmark in bookmarks:
+        try:
+            # 空のURLチェック
+            if not bookmark.url or not bookmark.url.strip():
+                result['edge_cases']['empty_urls'].append(bookmark)
+                result['invalid_bookmarks'].append(bookmark)
+                continue
+            
+            # 無効なURLチェック
+            if not _is_valid_url_format(bookmark.url):
+                result['edge_cases']['invalid_urls'].append(bookmark)
+                result['invalid_bookmarks'].append(bookmark)
+                continue
+            
+            # ドメインルートURLチェック
+            if _is_domain_root_url(bookmark.url):
+                result['edge_cases']['domain_roots'].append(bookmark)
+                # ドメインルートでも有効として扱う
+            
+            # 長すぎるタイトルチェック
+            if len(bookmark.title) > 200:
+                result['edge_cases']['long_titles'].append(bookmark)
+            
+            # 特殊文字チェック
+            if _has_problematic_characters(bookmark.title):
+                result['edge_cases']['special_characters'].append(bookmark)
+            
+            result['valid_bookmarks'].append(bookmark)
+            result['statistics']['valid'] += 1
+            
+        except Exception as e:
+            logger.error(f"ブックマーク処理エラー: {bookmark.title} - {str(e)}")
+            result['invalid_bookmarks'].append(bookmark)
+            result['statistics']['invalid'] += 1
+    
+    # エッジケース統計の更新
+    result['statistics']['edge_cases_count'] = sum(
+        len(cases) for cases in result['edge_cases'].values()
+    )
+    
+    return result
+
+
+def _is_valid_url_format(url: str) -> bool:
+    """URLの形式が有効かチェック"""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return bool(parsed.scheme and parsed.netloc)
+    except Exception:
+        return False
+
+
+def _is_domain_root_url(url: str) -> bool:
+    """URLがドメインルートかチェック"""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path = parsed.path.strip('/')
+        return len(path) == 0 and not parsed.query and not parsed.fragment
+    except Exception:
+        return False
+
+
+def _has_problematic_characters(title: str) -> bool:
+    """タイトルに問題のある文字が含まれているかチェック"""
+    problematic_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+    return any(char in title for char in problematic_chars)
+
+
+def display_edge_case_summary(edge_case_result: Dict[str, Any]):
+    """
+    Task 12: エッジケースの要約表示
+    
+    Args:
+        edge_case_result: handle_edge_cases_and_errors()の結果
+    """
+    st.subheader("🔍 エッジケース分析結果")
+    
+    stats = edge_case_result['statistics']
+    edge_cases = edge_case_result['edge_cases']
+    
+    # 統計情報の表示
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📊 総ブックマーク数", stats['total'])
+    with col2:
+        st.metric("✅ 有効", stats['valid'])
+    with col3:
+        st.metric("❌ 無効", stats['invalid'])
+    with col4:
+        st.metric("⚠️ エッジケース", stats['edge_cases_count'])
+    
+    # エッジケースの詳細表示
+    if stats['edge_cases_count'] > 0:
+        st.warning(f"⚠️ {stats['edge_cases_count']}個のエッジケースが検出されました")
+        
+        with st.expander("📋 エッジケース詳細"):
+            if edge_cases['empty_urls']:
+                st.write(f"**空のURL:** {len(edge_cases['empty_urls'])}個")
+                for bookmark in edge_cases['empty_urls'][:5]:  # 最初の5個を表示
+                    st.write(f"  - {bookmark.title}")
+                if len(edge_cases['empty_urls']) > 5:
+                    st.write(f"  ... 他 {len(edge_cases['empty_urls']) - 5}個")
+            
+            if edge_cases['invalid_urls']:
+                st.write(f"**無効なURL:** {len(edge_cases['invalid_urls'])}個")
+                for bookmark in edge_cases['invalid_urls'][:5]:
+                    st.write(f"  - {bookmark.title}: {bookmark.url}")
+                if len(edge_cases['invalid_urls']) > 5:
+                    st.write(f"  ... 他 {len(edge_cases['invalid_urls']) - 5}個")
+            
+            if edge_cases['domain_roots']:
+                st.write(f"**ドメインルートURL:** {len(edge_cases['domain_roots'])}個")
+                for bookmark in edge_cases['domain_roots'][:5]:
+                    st.write(f"  - {bookmark.title}: {bookmark.url}")
+                if len(edge_cases['domain_roots']) > 5:
+                    st.write(f"  ... 他 {len(edge_cases['domain_roots']) - 5}個")
+            
+            if edge_cases['long_titles']:
+                st.write(f"**長すぎるタイトル:** {len(edge_cases['long_titles'])}個")
+                for bookmark in edge_cases['long_titles'][:3]:
+                    truncated_title = bookmark.title[:50] + "..." if len(bookmark.title) > 50 else bookmark.title
+                    st.write(f"  - {truncated_title} ({len(bookmark.title)}文字)")
+                if len(edge_cases['long_titles']) > 3:
+                    st.write(f"  ... 他 {len(edge_cases['long_titles']) - 3}個")
+            
+            if edge_cases['special_characters']:
+                st.write(f"**特殊文字を含むタイトル:** {len(edge_cases['special_characters'])}個")
+                for bookmark in edge_cases['special_characters'][:5]:
+                    st.write(f"  - {bookmark.title}")
+                if len(edge_cases['special_characters']) > 5:
+                    st.write(f"  ... 他 {len(edge_cases['special_characters']) - 5}個")
+    
+    else:
+        st.success("✅ エッジケースは検出されませんでした")
+
+
+def display_user_friendly_messages():
+    """
+    Task 12: ユーザビリティ向上のためのメッセージ表示
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💡 使い方のヒント")
+    
+    with st.sidebar.expander("📚 基本的な使い方"):
+        st.markdown("""
+        1. **ブックマークファイルをアップロード**
+           - Chrome: 設定 → ブックマーク → ブックマークをエクスポート
+           - Firefox: ライブラリ → すべてのブックマーク → インポートとバックアップ
+        
+        2. **保存先ディレクトリを指定**
+           - Obsidianのvaultディレクトリを指定
+           - 新しいフォルダを作成することも可能
+        
+        3. **解析結果を確認**
+           - 重複ファイルは自動的に除外されます
+           - エラーがある場合は詳細を確認してください
+        
+        4. **ページを選択して保存**
+           - 不要なページのチェックを外すことができます
+           - 保存前に設定を確認してください
+        """)
+    
+    with st.sidebar.expander("⚠️ よくある問題と対処法"):
+        st.markdown("""
+        **ファイルアップロードエラー**
+        - ファイルサイズが大きすぎる場合は分割してください
+        - HTMLファイル以外は選択できません
+        
+        **ディレクトリアクセスエラー**
+        - 書き込み権限があることを確認してください
+        - パスに特殊文字が含まれていないか確認してください
+        
+        **ネットワークエラー**
+        - インターネット接続を確認してください
+        - 一部のサイトはアクセス制限がある場合があります
+        
+        **処理が遅い場合**
+        - ブックマーク数が多い場合は時間がかかります
+        - 不要なブックマークを事前に整理することをお勧めします
+        """)
+    
+    with st.sidebar.expander("🔧 高度な設定"):
+        st.markdown("""
+        **重複回避機能**
+        - 同名ファイルがある場合、自動的に番号が付与されます
+        - バックアップ作成オプションで既存ファイルを保護できます
+        
+        **エラー処理**
+        - リトライ可能なエラーは再実行できます
+        - 詳細なエラーログが記録されます
+        
+        **カスタマイズ**
+        - フォルダ構造はブックマークの階層に従います
+        - ファイル名は自動的にサニタイズされます
+        """)
+
+
+def show_application_info():
+    """
+    Task 12: アプリケーション情報の表示
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("ℹ️ アプリケーション情報")
+    
+    st.sidebar.info("""
+    **Bookmark to Obsidian Converter v1.0**
+    
+    このアプリケーションは、ブラウザのブックマークを
+    Obsidian用のMarkdownファイルに変換します。
+    
+    **主な機能:**
+    - ブックマーク階層の保持
+    - 重複ファイルの自動検出
+    - Webページ内容の自動取得
+    - Obsidian形式のMarkdown生成
+    - エラーハンドリングとリトライ機能
+    """)
+    
+    with st.sidebar.expander("📊 処理統計"):
+        if 'bookmarks' in st.session_state:
+            bookmarks = st.session_state['bookmarks']
+            st.write(f"📚 総ブックマーク数: {len(bookmarks)}")
+            
+            if 'directory_manager' in st.session_state:
+                directory_manager = st.session_state['directory_manager']
+                excluded_count = sum(1 for bookmark in bookmarks if directory_manager.is_duplicate(bookmark))
+                st.write(f"✅ 処理対象: {len(bookmarks) - excluded_count}")
+                st.write(f"🔄 重複除外: {excluded_count}")
+        else:
+            st.write("まだブックマークが解析されていません")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Made with ❤️ using Streamlit")
 
 
 def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path):
@@ -3478,6 +3751,10 @@ def main():
                 st.session_state['start_analysis'] = True
         else:
             st.info("📋 上記の設定を完了してください")
+        
+        # Task 12: ユーザビリティ向上機能の追加
+        display_user_friendly_messages()
+        show_application_info()
     
     # メインコンテンツエリア
     col1, col2 = st.columns([2, 1])
@@ -3538,10 +3815,16 @@ def main():
                             for duplicate in duplicates['files']:
                                 logger.info(f"  🔄 {duplicate}")
                         
+                        # Task 12: エッジケース分析の実行
+                        logger.info("🔍 エッジケース分析開始...")
+                        edge_case_result = handle_edge_cases_and_errors(bookmarks)
+                        logger.info(f"🔍 エッジケース分析完了: {edge_case_result['statistics']['edge_cases_count']}個のエッジケースを検出")
+                        
                         # セッション状態に保存
                         st.session_state['directory_manager'] = directory_manager
                         st.session_state['existing_structure'] = existing_structure
                         st.session_state['duplicates'] = duplicates
+                        st.session_state['edge_case_result'] = edge_case_result
                     
                     # 解析結果の表示
                     if bookmarks:
@@ -3567,6 +3850,10 @@ def main():
                             st.metric("📁 フォルダ数", stats['folder_count'])
                         with col_stat4:
                             st.metric("🔄 重複ファイル数", len(duplicates['files']))
+                        
+                        # Task 12: エッジケース分析結果の表示
+                        if 'edge_case_result' in st.session_state:
+                            display_edge_case_summary(st.session_state['edge_case_result'])
                         
                         # 重複チェック結果の表示
                         st.subheader("🔄 重複チェック結果")
