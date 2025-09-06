@@ -782,7 +782,7 @@ class WebScraper:
     
     def extract_article_content(self, html: str, url: str = "") -> Optional[Dict]:
         """
-        HTMLから記事本文とメタデータを抽出
+        HTMLから記事本文とメタデータを抽出（高度な抽出アルゴリズム）
         
         Args:
             html: HTMLコンテンツ
@@ -799,87 +799,38 @@ class WebScraper:
                 'title': '',
                 'content': '',
                 'tags': [],
-                'metadata': {}
+                'metadata': {},
+                'quality_score': 0.0,
+                'extraction_method': ''
             }
             
-            # タイトルの抽出
-            title_tag = soup.find('title')
-            if title_tag:
-                article_data['title'] = title_tag.get_text(strip=True)
+            # 不要な要素を事前に除去
+            self._remove_unwanted_elements(soup)
+            
+            # タイトルの抽出（複数の方法を試行）
+            article_data['title'] = self._extract_title(soup, url)
             
             # メタデータの抽出
-            meta_tags = soup.find_all('meta')
-            for meta in meta_tags:
-                name = meta.get('name', '').lower()
-                property_attr = meta.get('property', '').lower()
-                content = meta.get('content', '')
+            article_data['metadata'] = self._extract_metadata(soup)
+            
+            # タグ情報の抽出
+            article_data['tags'] = self._extract_tags(soup, article_data['metadata'])
+            
+            # 記事本文の抽出（複数のアルゴリズムを試行）
+            content_result = self._extract_main_content(soup, url)
+            
+            if content_result:
+                article_data['content'] = content_result['content']
+                article_data['quality_score'] = content_result['quality_score']
+                article_data['extraction_method'] = content_result['method']
                 
-                if content:
-                    if name in ['description', 'keywords', 'author']:
-                        article_data['metadata'][name] = content
-                    elif property_attr.startswith('og:'):
-                        article_data['metadata'][property_attr] = content
-                    elif property_attr.startswith('article:'):
-                        article_data['metadata'][property_attr] = content
-            
-            # 記事本文の抽出（複数の方法を試行）
-            content_selectors = [
-                'article',
-                '[role="main"]',
-                'main',
-                '.content',
-                '.post-content',
-                '.entry-content',
-                '.article-content',
-                '#content',
-                '#main-content',
-                '.main-content'
-            ]
-            
-            article_content = None
-            
-            for selector in content_selectors:
-                elements = soup.select(selector)
-                if elements:
-                    # 最も長いコンテンツを選択
-                    longest_element = max(elements, key=lambda x: len(x.get_text()))
-                    if len(longest_element.get_text(strip=True)) > 100:  # 最小文字数チェック
-                        article_content = longest_element
-                        logger.debug(f"📄 記事本文検出: {selector} (文字数: {len(longest_element.get_text())})")
-                        break
-            
-            # 記事本文が見つからない場合はbodyタグから抽出
-            if not article_content:
-                body = soup.find('body')
-                if body:
-                    # 不要な要素を除去
-                    for unwanted in body.select('nav, header, footer, aside, .sidebar, .navigation, .menu, script, style, .advertisement, .ads'):
-                        unwanted.decompose()
-                    
-                    if len(body.get_text(strip=True)) > 100:
-                        article_content = body
-                        logger.debug(f"📄 記事本文をbodyから抽出 (文字数: {len(body.get_text())})")
-            
-            # 記事本文の処理
-            if article_content:
-                # 不要な要素をさらに除去
-                for unwanted in article_content.select('script, style, .share-buttons, .social-share, .comments, .related-posts'):
-                    unwanted.decompose()
-                
-                # テキストコンテンツを抽出
-                text_content = article_content.get_text(separator='\n', strip=True)
-                
-                # 空行を整理
-                lines = [line.strip() for line in text_content.split('\n') if line.strip()]
-                article_data['content'] = '\n\n'.join(lines)
-                
-                # 最小文字数チェック
-                if len(article_data['content']) < 50:
-                    logger.warning(f"⚠️ 記事本文が短すぎます: {url} (文字数: {len(article_data['content'])})")
+                # コンテンツ品質の検証
+                if self._validate_content_quality(article_data, url):
+                    logger.debug(f"✅ 記事本文抽出成功: {url} (文字数: {len(article_data['content'])}, 品質スコア: {article_data['quality_score']:.2f}, 方法: {article_data['extraction_method']})")
+                    return article_data
+                else:
+                    logger.warning(f"⚠️ コンテンツ品質が基準を満たしません: {url}")
                     return None
-                
-                logger.debug(f"✅ 記事本文抽出成功: {url} (文字数: {len(article_data['content'])})")
-                return article_data
             else:
                 logger.warning(f"⚠️ 記事本文が見つかりません: {url}")
                 return None
@@ -887,6 +838,416 @@ class WebScraper:
         except Exception as e:
             logger.error(f"❌ 記事本文抽出エラー: {url} - {str(e)}")
             return None
+    
+    def _remove_unwanted_elements(self, soup: BeautifulSoup) -> None:
+        """
+        不要な要素を除去（広告、ナビゲーション、スクリプトなど）
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+        """
+        # 除去対象のセレクタ
+        unwanted_selectors = [
+            # スクリプトとスタイル
+            'script', 'style', 'noscript',
+            
+            # ナビゲーション要素
+            'nav', 'header', 'footer', 'aside',
+            '.navigation', '.navbar', '.nav-menu', '.menu',
+            '.breadcrumb', '.breadcrumbs',
+            
+            # 広告関連
+            '.advertisement', '.ads', '.ad', '.advert',
+            '.google-ads', '.adsense', '.ad-container',
+            '[id*="ad"]', '[class*="ad-"]', '[class*="ads-"]',
+            
+            # ソーシャル・共有ボタン
+            '.share-buttons', '.social-share', '.social-buttons',
+            '.share', '.sharing', '.social-media',
+            
+            # コメント・関連記事
+            '.comments', '.comment-section', '.disqus',
+            '.related-posts', '.related-articles', '.recommendations',
+            
+            # サイドバー・ウィジェット
+            '.sidebar', '.widget', '.widgets',
+            
+            # その他の不要要素
+            '.popup', '.modal', '.overlay',
+            '.newsletter', '.subscription',
+            '.cookie-notice', '.cookie-banner',
+            '.back-to-top', '.scroll-to-top'
+        ]
+        
+        for selector in unwanted_selectors:
+            for element in soup.select(selector):
+                element.decompose()
+    
+    def _extract_title(self, soup: BeautifulSoup, url: str) -> str:
+        """
+        ページタイトルを抽出（複数の方法を試行）
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            url: 元のURL
+            
+        Returns:
+            str: 抽出されたタイトル
+        """
+        # タイトル抽出の優先順位
+        title_selectors = [
+            'h1',  # メインタイトル
+            'title',  # HTMLタイトル
+            '[property="og:title"]',  # Open Graphタイトル
+            '.title', '.post-title', '.article-title',
+            '.entry-title', '.page-title'
+        ]
+        
+        for selector in title_selectors:
+            elements = soup.select(selector)
+            for element in elements:
+                if selector == '[property="og:title"]':
+                    title = element.get('content', '').strip()
+                else:
+                    title = element.get_text(strip=True)
+                
+                if title and len(title) > 5:  # 最小文字数チェック
+                    # タイトルのクリーニング
+                    title = re.sub(r'\s+', ' ', title)  # 連続する空白を単一に
+                    title = title.replace('\n', ' ').replace('\t', ' ')
+                    return title[:200]  # 最大200文字に制限
+        
+        # タイトルが見つからない場合はURLから生成
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        return f"記事 - {parsed_url.netloc}"
+    
+    def _extract_metadata(self, soup: BeautifulSoup) -> Dict[str, str]:
+        """
+        メタデータを抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            
+        Returns:
+            Dict[str, str]: 抽出されたメタデータ
+        """
+        metadata = {}
+        
+        # メタタグから情報を抽出
+        meta_tags = soup.find_all('meta')
+        for meta in meta_tags:
+            name = meta.get('name', '').lower()
+            property_attr = meta.get('property', '').lower()
+            content = meta.get('content', '').strip()
+            
+            if content:
+                # 標準的なメタタグ
+                if name in ['description', 'keywords', 'author', 'robots', 'viewport']:
+                    metadata[name] = content
+                
+                # Open Graphタグ
+                elif property_attr.startswith('og:'):
+                    metadata[property_attr] = content
+                
+                # Articleタグ
+                elif property_attr.startswith('article:'):
+                    metadata[property_attr] = content
+                
+                # Twitterカード
+                elif name.startswith('twitter:'):
+                    metadata[name] = content
+        
+        # 構造化データ（JSON-LD）の抽出
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            try:
+                import json
+                data = json.loads(script.string)
+                if isinstance(data, dict):
+                    if data.get('@type') in ['Article', 'BlogPosting', 'NewsArticle']:
+                        if 'author' in data:
+                            metadata['structured_author'] = str(data['author'])
+                        if 'datePublished' in data:
+                            metadata['structured_date'] = data['datePublished']
+                        if 'description' in data:
+                            metadata['structured_description'] = data['description']
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        
+        return metadata
+    
+    def _extract_tags(self, soup: BeautifulSoup, metadata: Dict[str, str]) -> List[str]:
+        """
+        タグ情報を抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            metadata: メタデータ
+            
+        Returns:
+            List[str]: 抽出されたタグ一覧
+        """
+        tags = set()
+        
+        # メタデータのキーワードから抽出
+        keywords = metadata.get('keywords', '')
+        if keywords:
+            # カンマ区切りのキーワードを分割
+            keyword_list = [kw.strip() for kw in keywords.split(',') if kw.strip()]
+            tags.update(keyword_list)
+        
+        # HTMLからタグ要素を抽出
+        tag_selectors = [
+            '.tags a', '.tag a', '.categories a', '.category a',
+            '.labels a', '.label a', '.topics a', '.topic a',
+            '[rel="tag"]', '.post-tags a', '.entry-tags a'
+        ]
+        
+        for selector in tag_selectors:
+            elements = soup.select(selector)
+            for element in elements:
+                tag_text = element.get_text(strip=True)
+                if tag_text and len(tag_text) <= 50:  # 最大50文字のタグのみ
+                    # タグのクリーニング
+                    tag_text = re.sub(r'[^\w\s\-_]', '', tag_text)  # 特殊文字を除去
+                    tag_text = re.sub(r'\s+', '-', tag_text.strip())  # スペースをハイフンに
+                    if tag_text:
+                        tags.add(tag_text)
+        
+        # タグ数を制限（最大20個）
+        return list(tags)[:20]
+    
+    def _extract_main_content(self, soup: BeautifulSoup, url: str) -> Optional[Dict]:
+        """
+        メインコンテンツを抽出（複数のアルゴリズムを試行）
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            url: 元のURL
+            
+        Returns:
+            Optional[Dict]: 抽出結果（content, quality_score, method）
+        """
+        extraction_methods = [
+            ('semantic_tags', self._extract_by_semantic_tags),
+            ('content_density', self._extract_by_content_density),
+            ('common_selectors', self._extract_by_common_selectors),
+            ('body_fallback', self._extract_by_body_fallback)
+        ]
+        
+        best_result = None
+        best_score = 0.0
+        
+        for method_name, method_func in extraction_methods:
+            try:
+                result = method_func(soup)
+                if result and result['quality_score'] > best_score:
+                    best_result = result
+                    best_score = result['quality_score']
+                    best_result['method'] = method_name
+                    
+                    # 十分に高品質なコンテンツが見つかった場合は早期終了
+                    if best_score >= 0.8:
+                        break
+                        
+            except Exception as e:
+                logger.debug(f"抽出方法 {method_name} でエラー: {str(e)}")
+                continue
+        
+        return best_result
+    
+    def _extract_by_semantic_tags(self, soup: BeautifulSoup) -> Optional[Dict]:
+        """
+        セマンティックタグを使用した抽出
+        """
+        semantic_selectors = ['article', 'main', '[role="main"]']
+        
+        for selector in semantic_selectors:
+            elements = soup.select(selector)
+            if elements:
+                # 最も長いコンテンツを選択
+                best_element = max(elements, key=lambda x: len(x.get_text()))
+                content = self._clean_content(best_element.get_text())
+                
+                if len(content) > 50:  # 閾値を下げる
+                    return {
+                        'content': content,
+                        'quality_score': 0.9,  # セマンティックタグは高品質
+                        'method': 'semantic_tags'
+                    }
+        
+        return None
+    
+    def _extract_by_content_density(self, soup: BeautifulSoup) -> Optional[Dict]:
+        """
+        コンテンツ密度による抽出
+        """
+        # 各要素のコンテンツ密度を計算
+        candidates = []
+        
+        for element in soup.find_all(['div', 'section', 'article']):
+            text = element.get_text(strip=True)
+            if len(text) < 50:  # 閾値を下げる
+                continue
+            
+            # リンク密度を計算（リンクテキスト / 全テキスト）
+            link_text = ''.join([a.get_text() for a in element.find_all('a')])
+            link_density = len(link_text) / len(text) if text else 1.0
+            
+            # 段落数を計算
+            paragraphs = len(element.find_all('p'))
+            
+            # 品質スコアを計算
+            quality_score = (
+                min(len(text) / 500, 1.0) * 0.4 +  # 文字数（最大500文字で1.0）
+                (1.0 - link_density) * 0.4 +  # リンク密度が低いほど高スコア
+                min(paragraphs / 3, 1.0) * 0.2  # 段落数（最大3段落で1.0）
+            )
+            
+            candidates.append({
+                'element': element,
+                'text': text,
+                'quality_score': quality_score
+            })
+        
+        if candidates:
+            # 最高スコアの要素を選択
+            best_candidate = max(candidates, key=lambda x: x['quality_score'])
+            content = self._clean_content(best_candidate['text'])
+            
+            return {
+                'content': content,
+                'quality_score': best_candidate['quality_score'],
+                'method': 'content_density'
+            }
+        
+        return None
+    
+    def _extract_by_common_selectors(self, soup: BeautifulSoup) -> Optional[Dict]:
+        """
+        一般的なセレクタによる抽出
+        """
+        common_selectors = [
+            '.content', '.post-content', '.entry-content',
+            '.article-content', '#content', '#main-content',
+            '.main-content', '.post-body', '.entry-body',
+            '.article-body', '.content-body'
+        ]
+        
+        for selector in common_selectors:
+            elements = soup.select(selector)
+            if elements:
+                best_element = max(elements, key=lambda x: len(x.get_text()))
+                content = self._clean_content(best_element.get_text())
+                
+                if len(content) > 100:
+                    return {
+                        'content': content,
+                        'quality_score': 0.7,  # 中程度の品質
+                        'method': 'common_selectors'
+                    }
+        
+        return None
+    
+    def _extract_by_body_fallback(self, soup: BeautifulSoup) -> Optional[Dict]:
+        """
+        bodyタグからのフォールバック抽出
+        """
+        body = soup.find('body')
+        if body:
+            content = self._clean_content(body.get_text())
+            
+            if len(content) > 200:
+                return {
+                    'content': content,
+                    'quality_score': 0.3,  # 低品質（フォールバック）
+                    'method': 'body_fallback'
+                }
+        
+        return None
+    
+    def _clean_content(self, text: str) -> str:
+        """
+        テキストコンテンツをクリーニング
+        
+        Args:
+            text: 元のテキスト
+            
+        Returns:
+            str: クリーニング済みテキスト
+        """
+        if not text:
+            return ""
+        
+        # 連続する空白を単一のスペースに
+        text = re.sub(r'[ \t]+', ' ', text)
+        
+        # 行ごとに処理
+        lines = []
+        for line in text.split('\n'):
+            line = line.strip()
+            if line and len(line) > 3:  # 短すぎる行は除外
+                lines.append(line)
+        
+        # 段落として結合
+        content = '\n\n'.join(lines)
+        
+        # 最大文字数制限（10,000文字）
+        if len(content) > 10000:
+            content = content[:10000] + "..."
+        
+        return content
+    
+    def _validate_content_quality(self, article_data: Dict, url: str) -> bool:
+        """
+        コンテンツ品質を検証
+        
+        Args:
+            article_data: 記事データ
+            url: 元のURL
+            
+        Returns:
+            bool: 品質基準を満たす場合True
+        """
+        content = article_data.get('content', '')
+        quality_score = article_data.get('quality_score', 0.0)
+        
+        # 基本的な品質チェック
+        checks = {
+            'min_length': len(content) >= 100,  # 最小100文字
+            'max_length': len(content) <= 50000,  # 最大50,000文字
+            'quality_score': quality_score >= 0.3,  # 最小品質スコア
+            'has_title': bool(article_data.get('title', '').strip()),  # タイトル存在
+            'reasonable_structure': content.count('\n') >= 2  # 最低限の構造
+        }
+        
+        # すべてのチェックをパス
+        passed_checks = sum(checks.values())
+        total_checks = len(checks)
+        
+        success_rate = passed_checks / total_checks
+        
+        if success_rate < 0.8:  # 80%以上のチェックをパスする必要
+            logger.debug(f"品質チェック失敗: {url} - {checks}")
+            return False
+        
+        # 特定のパターンをチェック（エラーページなど）
+        error_patterns = [
+            r'404.*not found',
+            r'page not found',
+            r'access denied',
+            r'forbidden',
+            r'error occurred'
+        ]
+        
+        content_lower = content.lower()
+        for pattern in error_patterns:
+            if re.search(pattern, content_lower):
+                logger.debug(f"エラーページパターン検出: {url} - {pattern}")
+                return False
+        
+        return True
     
     def group_urls_by_domain(self, urls: List[str]) -> Dict[str, List[str]]:
         """
