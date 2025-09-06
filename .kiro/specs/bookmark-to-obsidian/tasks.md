@@ -41,7 +41,7 @@
   - タグ情報の抽出機能を実装し、不要な要素（広告、ナビゲーション等）を除去する
   - _要件: 3.3, 3.4_
 
-- [ ] 8. Obsidian形式Markdown生成機能の実装
+- [x] 8. Obsidian形式Markdown生成機能の実装
   - MarkdownGeneratorクラスを実装し、YAML front matterを含むObsidian形式のMarkdownを生成する機能を作成する
   - 記事本文をMarkdown形式に変換し、Obsidianのタグ形式（#タグ名）に対応する機能を実装する
   - 元のブックマーク階層構造を維持したファイルパス生成機能を実装する
