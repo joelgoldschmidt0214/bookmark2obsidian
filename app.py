@@ -2615,14 +2615,6 @@ def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, o
         selected_count = sum(1 for selected in st.session_state.selected_pages.values() if selected)
         st.write(f"**選択中:** {selected_count}/{len(bookmarks)} ページ")
     
-    # フォルダ別にブックマークを整理
-    folder_groups = organize_bookmarks_by_folder(bookmarks)
-    
-    # 改善されたツリー表示
-    display_bookmark_tree(bookmarks, folder_groups, duplicates)
-    
-
-    
     selected_bookmarks = [
         bookmark for i, bookmark in enumerate(bookmarks) 
         if st.session_state.selected_pages.get(i, False)
@@ -2842,6 +2834,7 @@ def display_bookmark_tree(bookmarks: List[Bookmark], folder_groups: Dict[tuple, 
                         if st.button("👁️", key=f"preview_{original_index}", help="プレビュー表示"):
                             st.session_state['preview_bookmark'] = bookmark
                             st.session_state['preview_index'] = original_index
+                            st.rerun()
                     else:
                         st.caption("除外")
 
@@ -2921,6 +2914,32 @@ def display_bookmark_structure_tree(directory_structure: Dict[str, List[str]], d
     _display_tree_recursive(folder_tree, folder_stats, directory_structure, "", True, "")
     
     return total_to_process, total_excluded
+
+
+def display_bookmark_list_only(bookmarks: List[Bookmark], duplicates: Dict):
+    """
+    ブックマーク一覧のみを表示（プレビュー用の左カラム）
+    
+    Args:
+        bookmarks: ブックマーク一覧
+        duplicates: 重複ファイル情報
+    """
+    # セッション状態の初期化
+    if 'selected_pages' not in st.session_state:
+        st.session_state.selected_pages = {}
+        for i, bookmark in enumerate(bookmarks):
+            is_duplicate = any(bookmark.title in dup_file for dup_file in duplicates.get('files', []))
+            st.session_state.selected_pages[i] = not is_duplicate
+    
+    # 選択状況の表示
+    selected_count = sum(1 for selected in st.session_state.selected_pages.values() if selected)
+    st.write(f"**選択中:** {selected_count}/{len(bookmarks)} ページ")
+    
+    # フォルダ別にブックマークを整理
+    folder_groups = organize_bookmarks_by_folder(bookmarks)
+    
+    # 改善されたツリー表示
+    display_bookmark_tree(bookmarks, folder_groups, duplicates)
 
 
 def _display_tree_recursive(tree_dict: Dict, folder_stats: Dict, directory_structure: Dict, prefix: str, is_root: bool, current_path: str = ""):
@@ -4098,15 +4117,19 @@ def main():
                         if total_to_process > 0:
                             st.markdown("---")
                             
+                            # ファイル保存セクション（上部に表示）
+                            display_page_list_and_preview(bookmarks, duplicates, st.session_state['output_directory'])
+                            
                             # 2カラムレイアウトでページ一覧とプレビューを表示
+                            st.markdown("---")
                             col1, col2 = st.columns([2, 1])
                             
                             with col1:
-                                st.header("📋 ページ一覧")
-                                display_page_list_and_preview(bookmarks, duplicates, st.session_state['output_directory'])
+                                st.header("�  ブックマーク一覧")
+                                display_bookmark_list_only(bookmarks, duplicates)
                             
                             with col2:
-                                st.header("👁️ プレビュー")
+                                st.header("�️ プレビジュー")
                                 if 'preview_bookmark' in st.session_state and 'preview_index' in st.session_state:
                                     show_page_preview(st.session_state['preview_bookmark'], st.session_state['preview_index'])
                                 else:
