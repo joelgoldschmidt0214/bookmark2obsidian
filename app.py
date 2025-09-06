@@ -2889,25 +2889,25 @@ def show_page_preview(bookmark: Bookmark, index: int):
             if bookmark.folder_path:
                 folder_path = " > ".join(bookmark.folder_path)
                 st.markdown(f"**📁 フォルダ:** {folder_path}")
+        
+        # ページの状態
+        if page.status == PageStatus.SUCCESS and page.content:
+            st.success("✅ 記事内容の取得に成功")
             
-            # ページの状態
-            if page.status == PageStatus.SUCCESS and page.content:
-                st.success("✅ 記事内容の取得に成功")
-                
-                # コンテンツプレビュー（幅を制限）
-                with st.expander("📖 記事内容プレビュー", expanded=True):
-                    # 記事の最初の500文字を表示
-                    preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
-                    st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
-                
-                # タグ情報
-                if page.tags:
-                    st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
-                
-                # メタデータ
-                if page.metadata:
-                    with st.expander("📊 メタデータ"):
-                        st.json(page.metadata)
+            # コンテンツプレビュー（幅を制限）
+            with st.expander("📖 記事内容プレビュー", expanded=True):
+                # 記事の最初の500文字を表示
+                preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
+                st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
+            
+            # タグ情報
+            if page.tags:
+                st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
+            
+            # メタデータ
+            if page.metadata:
+                with st.expander("📊 メタデータ"):
+                    st.json(page.metadata)
                     
         elif page.status == PageStatus.ERROR:
             st.error("❌ 記事内容の取得に失敗")
@@ -2924,89 +2924,6 @@ def show_page_preview(bookmark: Bookmark, index: int):
     else:
         st.warning("⚠️ プレビューデータがありません")
         st.markdown("先にブックマーク解析とページ内容取得を実行してください。")
-        
-        # 基本情報
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"**URL:** {bookmark.url}")
-            quality_score = article_data.get('quality_score', 'N/A')
-            if isinstance(quality_score, (int, float)):
-                quality_color = "🟢" if quality_score > 0.7 else "🟡" if quality_score > 0.4 else "🔴"
-                st.markdown(f"**品質スコア:** {quality_color} {quality_score}")
-            else:
-                st.markdown(f"**品質スコア:** {quality_score}")
-        
-        with col2:
-            extraction_method = article_data.get('extraction_method', 'N/A')
-            method_icon = "✅" if extraction_method != 'fallback' else "⚠️"
-            st.markdown(f"**抽出方法:** {method_icon} {extraction_method}")
-            
-            content_length = len(article_data.get('content', ''))
-            st.markdown(f"**文字数:** {content_length:,}文字")
-        
-        # タグ表示
-        if article_data.get('tags'):
-            st.markdown("**タグ:** " + ", ".join([f"`{tag}`" for tag in article_data['tags']]))
-        
-        # 記事内容のプレビュー（最初の500文字）
-        content = article_data.get('content', '')
-        if content:
-            st.markdown("**記事内容プレビュー:**")
-            preview_content = content[:500] + "..." if len(content) > 500 else content
-            st.text_area("内容", preview_content, height=200, disabled=True)
-        
-        # 生成されるMarkdownのプレビュー
-        with st.expander("📝 生成されるMarkdownファイル"):
-            st.code(preview_data['markdown'], language='markdown')
-        
-        # プレビューアクション
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 プレビューを更新", key=f"refresh_preview_{index}"):
-                # キャッシュをクリアして再取得
-                if index in st.session_state.preview_cache:
-                    del st.session_state.preview_cache[index]
-                st.rerun()
-        
-        with col2:
-            if st.button("📋 URLをコピー", key=f"copy_url_{index}"):
-                st.code(bookmark.url)
-                st.success("URLを表示しました")
-    
-    else:
-        error_type = preview_data.get('error_type', 'unknown')
-        retryable = preview_data.get('retryable', False)
-        
-        # エラータイプに応じたアイコンとメッセージ
-        error_icons = {
-            'network': '🔌',
-            'timeout': '⏰',
-            'fetch': '🌐',
-            'extraction': '📄',
-            'markdown': '📝',
-            'unexpected': '💥'
-        }
-        
-        error_icon = error_icons.get(error_type, '❌')
-        st.error(f"{error_icon} プレビューエラー: {preview_data['error']}")
-        
-        if retryable:
-            st.info("🔄 このエラーはリトライ可能です")
-            if st.button("🔄 リトライ", key=f"retry_preview_{index}"):
-                # キャッシュをクリアして再取得
-                if index in st.session_state.preview_cache:
-                    del st.session_state.preview_cache[index]
-                st.rerun()
-        else:
-            st.info("💡 このページは手動で確認が必要です")
-        
-        # エラー詳細情報
-        with st.expander("🔍 エラー詳細"):
-            st.write(f"**エラータイプ:** {error_type}")
-            st.write(f"**リトライ可能:** {'はい' if retryable else 'いいえ'}")
-            st.write(f"**URL:** {bookmark.url}")
-            st.write(f"**タイトル:** {bookmark.title}")
 
 
 def save_selected_pages_enhanced(selected_bookmarks: List[Bookmark], output_directory: Path):
