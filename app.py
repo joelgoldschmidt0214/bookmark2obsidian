@@ -150,7 +150,7 @@ class LocalDirectoryManager:
     
     def __init__(self, base_path: Path):
         """
-        LocalDirectoryManagerを初期化
+        Task 11: 強化されたLocalDirectoryManagerを初期化
         
         Args:
             base_path: 基準となるディレクトリパス
@@ -158,6 +158,10 @@ class LocalDirectoryManager:
         self.base_path = Path(base_path)
         self.existing_structure = {}
         self.duplicate_files = set()
+        
+        # Task 11: ディレクトリの権限チェックと自動作成
+        self._ensure_directory_exists()
+        self._verify_directory_permissions()
     
     def scan_directory(self, path: Optional[str] = None) -> Dict[str, List[str]]:
         """
@@ -403,6 +407,161 @@ class LocalDirectoryManager:
             'total_directories': total_directories,
             'duplicate_files': len(self.duplicate_files)
         }
+    
+    def _ensure_directory_exists(self):
+        """
+        Task 11: ディレクトリの存在確認と自動作成
+        """
+        try:
+            if not self.base_path.exists():
+                logger.info(f"📁 ベースディレクトリを作成: {self.base_path}")
+                self.base_path.mkdir(parents=True, exist_ok=True)
+            elif not self.base_path.is_dir():
+                raise ValueError(f"指定されたパスはディレクトリではありません: {self.base_path}")
+        except Exception as e:
+            logger.error(f"❌ ディレクトリ作成エラー: {str(e)}")
+            raise
+    
+    def _verify_directory_permissions(self):
+        """
+        Task 11: ディレクトリの権限確認
+        """
+        try:
+            # 読み取り権限の確認
+            if not os.access(self.base_path, os.R_OK):
+                raise PermissionError(f"ディレクトリの読み取り権限がありません: {self.base_path}")
+            
+            # 書き込み権限の確認
+            if not os.access(self.base_path, os.W_OK):
+                raise PermissionError(f"ディレクトリの書き込み権限がありません: {self.base_path}")
+            
+            logger.debug(f"✅ ディレクトリ権限確認完了: {self.base_path}")
+            
+        except Exception as e:
+            logger.error(f"❌ ディレクトリ権限エラー: {str(e)}")
+            raise
+    
+    def create_directory_structure(self, folder_path: List[str]) -> Path:
+        """
+        Task 11: 指定されたフォルダ階層を自動作成
+        
+        Args:
+            folder_path: 作成するフォルダ階層のリスト
+            
+        Returns:
+            Path: 作成されたディレクトリパス
+        """
+        try:
+            if not folder_path:
+                return self.base_path
+            
+            # パス要素をサニタイズ
+            sanitized_parts = []
+            for part in folder_path:
+                sanitized = self._sanitize_folder_name(part)
+                if sanitized:
+                    sanitized_parts.append(sanitized)
+            
+            if not sanitized_parts:
+                return self.base_path
+            
+            # ディレクトリパスを構築
+            target_path = self.base_path
+            for part in sanitized_parts:
+                target_path = target_path / part
+            
+            # ディレクトリを作成
+            if not target_path.exists():
+                logger.info(f"📁 ディレクトリ作成: {target_path}")
+                target_path.mkdir(parents=True, exist_ok=True)
+            
+            return target_path
+            
+        except Exception as e:
+            logger.error(f"❌ ディレクトリ構造作成エラー: {str(e)}")
+            raise
+    
+    def _sanitize_folder_name(self, name: str) -> str:
+        """
+        Task 11: フォルダ名をファイルシステム用にサニタイズ
+        
+        Args:
+            name: 元のフォルダ名
+            
+        Returns:
+            str: サニタイズされたフォルダ名
+        """
+        if not name:
+            return ""
+        
+        # 危険な文字を除去・置換
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+        
+        # 連続するアンダースコアを単一に
+        sanitized = re.sub(r'_+', '_', sanitized)
+        
+        # 前後の空白とアンダースコアを除去
+        sanitized = sanitized.strip(' _.')
+        
+        # 長すぎる場合は切り詰め
+        if len(sanitized) > 100:
+            sanitized = sanitized[:100]
+        
+        # 予約語をチェック（Windows）
+        reserved_names = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']
+        if sanitized.upper() in reserved_names:
+            sanitized = f"_{sanitized}"
+        
+        return sanitized
+    
+    def validate_file_save_operation(self, file_path: Path) -> Dict[str, Any]:
+        """
+        Task 11: ファイル保存操作の事前検証
+        
+        Args:
+            file_path: 保存予定のファイルパス
+            
+        Returns:
+            Dict[str, Any]: 検証結果
+        """
+        result = {
+            'valid': True,
+            'warnings': [],
+            'errors': [],
+            'suggestions': []
+        }
+        
+        try:
+            # ディレクトリの存在確認
+            directory = file_path.parent
+            if not directory.exists():
+                result['warnings'].append(f"ディレクトリが存在しません（自動作成されます）: {directory}")
+            
+            # ファイルの存在確認
+            if file_path.exists():
+                result['warnings'].append(f"ファイルが既に存在します（上書きされます）: {file_path.name}")
+            
+            # 権限確認
+            if directory.exists():
+                if not os.access(directory, os.W_OK):
+                    result['valid'] = False
+                    result['errors'].append(f"ディレクトリの書き込み権限がありません: {directory}")
+            
+            # ファイル名の妥当性確認
+            if len(file_path.name) > 255:
+                result['valid'] = False
+                result['errors'].append(f"ファイル名が長すぎます（255文字以下にしてください）: {file_path.name}")
+            
+            # パスの長さ確認（Windows対応）
+            if len(str(file_path)) > 260:
+                result['warnings'].append(f"パスが長すぎる可能性があります（Windows環境で問題が発生する可能性）")
+                result['suggestions'].append("より短いフォルダ名やファイル名を使用することを検討してください")
+            
+        except Exception as e:
+            result['valid'] = False
+            result['errors'].append(f"検証中にエラーが発生しました: {str(e)}")
+        
+        return result
 
 
 class BookmarkParser:
@@ -1877,16 +2036,17 @@ class MarkdownGenerator:
         
         return '\n'.join(lines)
     
-    def generate_file_path(self, bookmark: 'Bookmark', base_path: Path) -> Path:
+    def generate_file_path(self, bookmark: 'Bookmark', base_path: Path, avoid_duplicates: bool = True) -> Path:
         """
-        ブックマーク階層構造を維持したファイルパスを生成
+        Task 11: 重複回避機能を強化したファイルパス生成
         
         Args:
             bookmark: ブックマーク情報
             base_path: 基準パス
+            avoid_duplicates: 重複回避を行うかどうか
             
         Returns:
-            Path: 生成されたファイルパス
+            Path: 生成されたファイルパス（重複回避済み）
         """
         try:
             # フォルダ階層を構築
@@ -1899,18 +2059,24 @@ class MarkdownGenerator:
                         folder_parts.append(clean_folder)
             
             # ファイル名を生成
-            filename = self._sanitize_path_component(bookmark.title)
-            if not filename:
-                filename = "untitled"
+            base_filename = self._sanitize_path_component(bookmark.title)
+            if not base_filename:
+                base_filename = "untitled"
             
-            # 拡張子を追加
-            filename += ".md"
+            # ディレクトリパスを構築
+            if folder_parts:
+                directory_path = base_path / Path(*folder_parts)
+            else:
+                directory_path = base_path
+            
+            # 重複回避機能
+            if avoid_duplicates:
+                final_filename = self._generate_unique_filename(directory_path, base_filename, ".md")
+            else:
+                final_filename = base_filename + ".md"
             
             # 完全なパスを構築
-            if folder_parts:
-                full_path = base_path / Path(*folder_parts) / filename
-            else:
-                full_path = base_path / filename
+            full_path = directory_path / final_filename
             
             logger.debug(f"📁 ファイルパス生成: {full_path}")
             return full_path
@@ -1920,6 +2086,44 @@ class MarkdownGenerator:
             # フォールバック: ルートディレクトリに保存
             safe_filename = f"bookmark_{hash(bookmark.url) % 10000}.md"
             return base_path / safe_filename
+    
+    def _generate_unique_filename(self, directory: Path, base_name: str, extension: str) -> str:
+        """
+        Task 11: 重複を回避したユニークなファイル名を生成
+        
+        Args:
+            directory: 保存先ディレクトリ
+            base_name: 基本ファイル名
+            extension: 拡張子
+            
+        Returns:
+            str: ユニークなファイル名
+        """
+        # 基本ファイル名をチェック
+        original_filename = base_name + extension
+        full_path = directory / original_filename
+        
+        if not full_path.exists():
+            return original_filename
+        
+        # 重複がある場合、番号を付けて回避
+        counter = 1
+        while True:
+            numbered_filename = f"{base_name}_{counter:03d}{extension}"
+            full_path = directory / numbered_filename
+            
+            if not full_path.exists():
+                logger.info(f"🔄 重複回避: {original_filename} → {numbered_filename}")
+                return numbered_filename
+            
+            counter += 1
+            
+            # 安全のため、1000回を超えたら強制終了
+            if counter > 1000:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                fallback_filename = f"{base_name}_{timestamp}{extension}"
+                logger.warning(f"⚠️ 重複回避上限到達、タイムスタンプ使用: {fallback_filename}")
+                return fallback_filename
     
     def _sanitize_path_component(self, name: str) -> str:
         """
@@ -2045,7 +2249,7 @@ def validate_directory_path(directory_path: str) -> tuple[bool, str]:
 
 def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path):
     """
-    Task 9: ページ一覧表示とプレビュー機能
+    Task 9 & 11: ページ一覧表示とプレビュー機能（ユーザー選択制御強化）
     
     Args:
         bookmarks: ブックマーク一覧
@@ -2147,9 +2351,9 @@ def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, o
                 
                 st.divider()
     
-    # 保存ボタンセクション
+    # Task 11: 強化された保存ボタンセクション
     st.markdown("---")
-    st.subheader("💾 ファイル保存")
+    st.subheader("💾 ファイル保存とユーザー選択制御")
     
     selected_bookmarks = [
         bookmark for i, bookmark in enumerate(bookmarks) 
@@ -2157,17 +2361,107 @@ def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, o
     ]
     
     if selected_bookmarks:
+        # 保存前の詳細情報表示
+        col1, col2, col3 = st.columns([2, 2, 2])
+        
+        with col1:
+            st.metric("📊 選択ページ数", len(selected_bookmarks))
+        
+        with col2:
+            # フォルダ別の統計
+            folder_stats = {}
+            for bookmark in selected_bookmarks:
+                folder_key = ' > '.join(bookmark.folder_path) if bookmark.folder_path else 'ルート'
+                folder_stats[folder_key] = folder_stats.get(folder_key, 0) + 1
+            st.metric("📁 対象フォルダ数", len(folder_stats))
+        
+        with col3:
+            # 推定ファイルサイズ（概算）
+            estimated_size = len(selected_bookmarks) * 5  # 1ページあたり約5KB想定
+            st.metric("📏 推定サイズ", f"~{estimated_size}KB")
+        
+        # 保存オプション
+        st.markdown("**保存オプション:**")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            avoid_duplicates = st.checkbox(
+                "🔄 ファイル名重複を自動回避", 
+                value=True,
+                help="同名ファイルが存在する場合、自動的に番号を付けて保存します"
+            )
+        
+        with col2:
+            create_backup = st.checkbox(
+                "💾 既存ファイルのバックアップ作成", 
+                value=False,
+                help="上書きする場合、既存ファイルを.bakファイルとして保存します"
+            )
+        
+        # 保存先ディレクトリの検証
+        directory_manager = LocalDirectoryManager(output_directory)
+        
+        # 保存予定ファイルの事前検証
+        validation_results = []
+        generator = MarkdownGenerator()
+        
+        for bookmark in selected_bookmarks[:5]:  # 最初の5個のみ検証（パフォーマンス考慮）
+            file_path = generator.generate_file_path(bookmark, output_directory, avoid_duplicates)
+            validation = directory_manager.validate_file_save_operation(file_path)
+            validation_results.append((bookmark, validation))
+        
+        # 検証結果の表示
+        warnings_count = sum(len(v[1]['warnings']) for v in validation_results)
+        errors_count = sum(len(v[1]['errors']) for v in validation_results)
+        
+        if warnings_count > 0 or errors_count > 0:
+            with st.expander(f"⚠️ 保存前チェック結果 (警告: {warnings_count}, エラー: {errors_count})"):
+                for bookmark, validation in validation_results:
+                    if validation['warnings'] or validation['errors']:
+                        st.write(f"**{bookmark.title}**")
+                        for warning in validation['warnings']:
+                            st.warning(f"⚠️ {warning}")
+                        for error in validation['errors']:
+                            st.error(f"❌ {error}")
+                        for suggestion in validation['suggestions']:
+                            st.info(f"💡 {suggestion}")
+        
+        # 保存ボタン
         col1, col2 = st.columns([1, 3])
         
         with col1:
-            if st.button("💾 選択したページを保存", type="primary"):
-                save_selected_pages(selected_bookmarks, output_directory)
+            save_disabled = errors_count > 0
+            if st.button(
+                "💾 選択したページを保存", 
+                type="primary",
+                disabled=save_disabled,
+                help="エラーがある場合は保存できません" if save_disabled else None
+            ):
+                # 保存オプションをセッション状態に保存
+                st.session_state['save_options'] = {
+                    'avoid_duplicates': avoid_duplicates,
+                    'create_backup': create_backup
+                }
+                save_selected_pages_enhanced(selected_bookmarks, output_directory)
         
         with col2:
             st.info(f"💡 {len(selected_bookmarks)}個のページがMarkdownファイルとして保存されます")
-            st.caption(f"保存先: {output_directory}")
+            st.caption(f"📁 保存先: {output_directory}")
+            
+            if avoid_duplicates:
+                st.caption("🔄 重複回避: 有効")
+            if create_backup:
+                st.caption("💾 バックアップ: 有効")
+        
+        # フォルダ別保存統計の詳細表示
+        if len(folder_stats) > 1:
+            with st.expander("📊 フォルダ別保存統計"):
+                for folder, count in sorted(folder_stats.items()):
+                    st.write(f"📁 {folder}: {count}個のファイル")
+    
     else:
         st.warning("⚠️ 保存するページが選択されていません")
+        st.info("💡 上記のチェックボックスでページを選択してください")
 
 
 def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[Bookmark]]:
@@ -2414,6 +2708,368 @@ def show_page_preview(bookmark: Bookmark, index: int):
             st.write(f"**リトライ可能:** {'はい' if retryable else 'いいえ'}")
             st.write(f"**URL:** {bookmark.url}")
             st.write(f"**タイトル:** {bookmark.title}")
+
+
+def save_selected_pages_enhanced(selected_bookmarks: List[Bookmark], output_directory: Path):
+    """
+    Task 11: 強化されたファイル保存機能（ユーザー選択制御対応）
+    
+    Args:
+        selected_bookmarks: 選択されたブックマーク一覧
+        output_directory: 出力ディレクトリ
+    """
+    if not selected_bookmarks:
+        st.warning("保存するページが選択されていません")
+        return
+    
+    # 保存オプションを取得
+    save_options = st.session_state.get('save_options', {
+        'avoid_duplicates': True,
+        'create_backup': False
+    })
+    
+    # 進捗表示とエラーハンドリングの初期化
+    progress_container = st.container()
+    error_container = st.container()
+    
+    with progress_container:
+        st.subheader("📊 ファイル保存進捗")
+        
+        # 複数の進捗バー
+        overall_progress = st.progress(0)
+        current_progress = st.progress(0)
+        
+        # ステータス表示
+        status_text = st.empty()
+        current_task = st.empty()
+        
+        # 統計情報
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            success_metric = st.metric("✅ 成功", 0)
+        with col2:
+            error_metric = st.metric("❌ エラー", 0)
+        with col3:
+            skip_metric = st.metric("⏭️ スキップ", 0)
+        with col4:
+            remaining_metric = st.metric("⏳ 残り", len(selected_bookmarks))
+    
+    # ディレクトリマネージャーとジェネレーターの初期化
+    directory_manager = LocalDirectoryManager(output_directory)
+    scraper = WebScraper()
+    generator = MarkdownGenerator()
+    
+    # エラーログとリトライ機能
+    error_log = []
+    retry_queue = []
+    
+    saved_count = 0
+    error_count = 0
+    skip_count = 0
+    
+    # メイン処理ループ
+    for i, bookmark in enumerate(selected_bookmarks):
+        overall_progress_value = (i + 1) / len(selected_bookmarks)
+        overall_progress.progress(overall_progress_value)
+        
+        status_text.text(f"📋 処理中: {i+1}/{len(selected_bookmarks)} ページ")
+        current_task.text(f"🔍 現在の処理: {bookmark.title}")
+        
+        try:
+            # ステップ1: ディレクトリ構造の作成
+            current_progress.progress(0.1)
+            current_task.text(f"📁 ディレクトリ準備: {bookmark.title}")
+            
+            try:
+                target_directory = directory_manager.create_directory_structure(bookmark.folder_path)
+            except Exception as e:
+                error_msg = f"ディレクトリ作成エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'directory',
+                    'retryable': False
+                })
+                logger.error(f"📁 {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ2: ファイルパス生成（重複回避）
+            current_progress.progress(0.2)
+            current_task.text(f"📝 ファイルパス生成: {bookmark.title}")
+            
+            try:
+                file_path = generator.generate_file_path(
+                    bookmark, 
+                    output_directory, 
+                    avoid_duplicates=save_options['avoid_duplicates']
+                )
+                
+                # バックアップ作成
+                if save_options['create_backup'] and file_path.exists():
+                    backup_path = file_path.with_suffix(f"{file_path.suffix}.bak")
+                    file_path.rename(backup_path)
+                    logger.info(f"💾 バックアップ作成: {backup_path}")
+                
+            except Exception as e:
+                error_msg = f"ファイルパス生成エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'filepath',
+                    'retryable': False
+                })
+                logger.error(f"📝 {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ3: ページ内容取得
+            current_progress.progress(0.4)
+            current_task.text(f"🌐 ページ取得中: {bookmark.title}")
+            
+            html_content = None
+            article_data = None
+            
+            # ネットワークエラーハンドリング
+            try:
+                html_content = scraper.fetch_page_content(bookmark.url)
+            except requests.exceptions.ConnectionError:
+                error_msg = f"ネットワーク接続エラー: {bookmark.url}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'network',
+                    'retryable': True
+                })
+                logger.error(f"🔌 {error_msg}")
+                skip_count += 1
+                continue
+            except requests.exceptions.Timeout:
+                error_msg = f"タイムアウトエラー: {bookmark.url}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'timeout',
+                    'retryable': True
+                })
+                logger.error(f"⏰ {error_msg}")
+                skip_count += 1
+                continue
+            except Exception as e:
+                error_msg = f"ページ取得エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'fetch',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ4: コンテンツ抽出
+            current_progress.progress(0.6)
+            current_task.text(f"📄 コンテンツ抽出中: {bookmark.title}")
+            
+            if html_content:
+                try:
+                    article_data = scraper.extract_article_content(html_content, bookmark.url)
+                except Exception as e:
+                    error_msg = f"コンテンツ抽出エラー: {str(e)}"
+                    error_log.append({
+                        'bookmark': bookmark,
+                        'error': error_msg,
+                        'type': 'extraction',
+                        'retryable': False
+                    })
+                    logger.warning(f"⚠️ {error_msg} - フォールバックを使用")
+            
+            # ステップ5: Markdown生成
+            current_progress.progress(0.8)
+            current_task.text(f"📝 Markdown生成中: {bookmark.title}")
+            
+            try:
+                if article_data:
+                    markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
+                else:
+                    # フォールバック用Markdown
+                    markdown_content = generator._generate_fallback_markdown(bookmark)
+            except Exception as e:
+                error_msg = f"Markdown生成エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'markdown',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ6: ファイル保存
+            current_progress.progress(0.9)
+            current_task.text(f"💾 ファイル保存中: {bookmark.title}")
+            
+            try:
+                # ディレクトリを作成
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # ファイルを保存
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(markdown_content)
+                
+                saved_count += 1
+                logger.info(f"✅ ファイル保存成功: {file_path}")
+                
+            except PermissionError:
+                error_msg = f"ファイル保存権限エラー: {file_path}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'permission',
+                    'retryable': False
+                })
+                logger.error(f"🔒 {error_msg}")
+                error_count += 1
+                continue
+            except OSError as e:
+                error_msg = f"ファイルシステムエラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'filesystem',
+                    'retryable': False
+                })
+                logger.error(f"💾 {error_msg}")
+                error_count += 1
+                continue
+            except Exception as e:
+                error_msg = f"ファイル保存エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'save',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ7: 完了
+            current_progress.progress(1.0)
+            
+        except Exception as e:
+            # 予期しないエラー
+            error_msg = f"予期しないエラー: {str(e)}"
+            error_log.append({
+                'bookmark': bookmark,
+                'error': error_msg,
+                'type': 'unexpected',
+                'retryable': False
+            })
+            logger.error(f"💥 {error_msg}")
+            error_count += 1
+        
+        # メトリクス更新
+        with col1:
+            success_metric.metric("✅ 成功", saved_count)
+        with col2:
+            error_metric.metric("❌ エラー", error_count)
+        with col3:
+            skip_metric.metric("⏭️ スキップ", skip_count)
+        with col4:
+            remaining_metric.metric("⏳ 残り", len(selected_bookmarks) - i - 1)
+    
+    # 完了処理
+    overall_progress.progress(1.0)
+    current_progress.progress(1.0)
+    status_text.text("🎉 ファイル保存完了！")
+    current_task.text("✅ すべての処理が完了しました")
+    
+    # 結果サマリー
+    st.markdown("---")
+    st.subheader("📊 保存結果サマリー")
+    
+    total_processed = saved_count + error_count + skip_count
+    
+    if saved_count > 0:
+        st.success(f"✅ {saved_count}個のファイルを正常に保存しました")
+    
+    if error_count > 0:
+        st.error(f"❌ {error_count}個のファイルでエラーが発生しました")
+    
+    if skip_count > 0:
+        st.warning(f"⏭️ {skip_count}個のファイルをスキップしました")
+    
+    # 保存オプションの結果表示
+    if save_options['avoid_duplicates']:
+        st.info("🔄 ファイル名重複回避機能を使用しました")
+    
+    if save_options['create_backup']:
+        st.info("💾 既存ファイルのバックアップを作成しました")
+    
+    # エラーログの表示（既存のコードを再利用）
+    if error_log:
+        with error_container:
+            st.subheader("🚨 エラーログ")
+            
+            # エラータイプ別の集計
+            error_types = {}
+            retryable_errors = []
+            
+            for error in error_log:
+                error_type = error['type']
+                if error_type not in error_types:
+                    error_types[error_type] = 0
+                error_types[error_type] += 1
+                
+                if error['retryable']:
+                    retryable_errors.append(error)
+            
+            # エラータイプ別表示
+            st.markdown("**エラータイプ別集計:**")
+            for error_type, count in error_types.items():
+                error_type_names = {
+                    'directory': '📁 ディレクトリエラー',
+                    'filepath': '📝 ファイルパスエラー',
+                    'network': '🔌 ネットワークエラー',
+                    'timeout': '⏰ タイムアウトエラー',
+                    'fetch': '🌐 ページ取得エラー',
+                    'extraction': '📄 コンテンツ抽出エラー',
+                    'markdown': '📝 Markdown生成エラー',
+                    'permission': '🔒 権限エラー',
+                    'filesystem': '💾 ファイルシステムエラー',
+                    'save': '💾 保存エラー',
+                    'unexpected': '💥 予期しないエラー'
+                }
+                st.write(f"- {error_type_names.get(error_type, error_type)}: {count}件")
+            
+            # 詳細エラーログ
+            with st.expander("📋 詳細エラーログ"):
+                for i, error in enumerate(error_log):
+                    st.write(f"**{i+1}. {error['bookmark'].title}**")
+                    st.write(f"   URL: {error['bookmark'].url}")
+                    st.write(f"   エラー: {error['error']}")
+                    st.write(f"   タイプ: {error['type']}")
+                    if error['retryable']:
+                        st.write("   🔄 リトライ可能")
+                    st.write("---")
+            
+            # リトライ機能
+            if retryable_errors:
+                st.subheader("🔄 リトライ機能")
+                st.info(f"{len(retryable_errors)}個のエラーはリトライ可能です")
+                
+                if st.button("🔄 エラーページをリトライ"):
+                    retry_bookmarks = [error['bookmark'] for error in retryable_errors]
+                    st.info("リトライを開始します...")
+                    save_selected_pages_enhanced(retry_bookmarks, output_directory)
+    
+    # 保存先情報
+    st.info(f"📁 保存先: {output_directory}")
+    
+    # 処理完了ログ
+    logger.info(f"🎉 ファイル保存完了: 成功={saved_count}, エラー={error_count}, スキップ={skip_count}")
 
 
 def save_selected_pages(selected_bookmarks: List[Bookmark], output_directory: Path):
