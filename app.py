@@ -90,8 +90,20 @@ class BookmarkParser:
         """
         bookmarks = []
         
-        # DLの直接の子要素のDTを順番に処理
-        for dt in dl_element.find_all('dt', recursive=False):
+        # DLエレメント内のDTを処理（Pタグ内にある場合も考慮）
+        # まず、このDLレベルのDTエレメントを取得
+        all_dt_in_dl = dl_element.find_all('dt')
+        
+        # ネストしたDL内のDTエレメントを除外
+        nested_dls = dl_element.find_all('dl')[1:]  # 最初のDLは自分自身なので除外
+        nested_dt_elements = set()
+        for nested_dl in nested_dls:
+            nested_dt_elements.update(nested_dl.find_all('dt'))
+        
+        # このDLレベルのDTエレメントのみを処理
+        direct_dt_elements = [dt for dt in all_dt_in_dl if dt not in nested_dt_elements]
+        
+        for dt in direct_dt_elements:
             # DTの次の兄弟要素がDDかどうかをチェック
             next_sibling = dt.find_next_sibling()
             
