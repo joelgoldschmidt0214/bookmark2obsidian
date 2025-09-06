@@ -1927,6 +1927,319 @@ def validate_directory_path(directory_path: str) -> tuple[bool, str]:
         return False, f"ディレクトリ検証エラー: {str(e)}"
 
 
+def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path):
+    """
+    Task 9: ページ一覧表示とプレビュー機能
+    
+    Args:
+        bookmarks: ブックマーク一覧
+        duplicates: 重複ファイル情報
+        output_directory: 出力ディレクトリ
+    """
+    st.header("📋 ページ一覧とプレビュー")
+    st.markdown("処理対象のページを確認し、必要に応じてプレビューを表示できます。")
+    
+    # セッション状態の初期化
+    if 'selected_pages' not in st.session_state:
+        # デフォルトで全てチェック済み（重複除外）
+        st.session_state.selected_pages = {}
+        for i, bookmark in enumerate(bookmarks):
+            # 重複ファイルでない場合はデフォルトでチェック
+            is_duplicate = any(bookmark.title in dup_file for dup_file in duplicates.get('files', []))
+            st.session_state.selected_pages[i] = not is_duplicate
+    
+    if 'preview_cache' not in st.session_state:
+        st.session_state.preview_cache = {}
+    
+    # 全選択/全解除ボタン
+    col1, col2, col3 = st.columns([1, 1, 4])
+    
+    with col1:
+        if st.button("✅ 全選択"):
+            for i in range(len(bookmarks)):
+                st.session_state.selected_pages[i] = True
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ 全解除"):
+            for i in range(len(bookmarks)):
+                st.session_state.selected_pages[i] = False
+            st.rerun()
+    
+    with col3:
+        selected_count = sum(1 for selected in st.session_state.selected_pages.values() if selected)
+        st.write(f"**選択中:** {selected_count}/{len(bookmarks)} ページ")
+    
+    # フォルダ別にブックマークを整理
+    folder_groups = organize_bookmarks_by_folder(bookmarks)
+    
+    # 展開可能なディレクトリツリー形式で表示
+    for folder_path, folder_bookmarks in folder_groups.items():
+        folder_name = ' > '.join(folder_path) if folder_path else "📁 ルートフォルダ"
+        
+        # フォルダ内の選択状況を計算
+        folder_indices = [bookmarks.index(bookmark) for bookmark in folder_bookmarks]
+        folder_selected = sum(1 for idx in folder_indices if st.session_state.selected_pages.get(idx, False))
+        
+        with st.expander(f"📂 {folder_name} ({folder_selected}/{len(folder_bookmarks)} 選択)", expanded=True):
+            for bookmark in folder_bookmarks:
+                original_index = bookmarks.index(bookmark)
+                
+                # 重複チェック
+                is_duplicate = any(bookmark.title in dup_file for dup_file in duplicates.get('files', []))
+                
+                # チェックボックスとページ情報を表示
+                col1, col2, col3 = st.columns([1, 4, 1])
+                
+                with col1:
+                    if is_duplicate:
+                        st.checkbox(
+                            "重複",
+                            value=False,
+                            disabled=True,
+                            key=f"checkbox_dup_{original_index}",
+                            help="このページは既存ファイルと重複しています"
+                        )
+                        st.session_state.selected_pages[original_index] = False
+                    else:
+                        selected = st.checkbox(
+                            "選択",
+                            value=st.session_state.selected_pages.get(original_index, True),
+                            key=f"checkbox_{original_index}"
+                        )
+                        st.session_state.selected_pages[original_index] = selected
+                
+                with col2:
+                    # ページ情報表示
+                    if is_duplicate:
+                        st.markdown(f"~~**{bookmark.title}**~~ *(重複)*")
+                    else:
+                        st.markdown(f"**{bookmark.title}**")
+                    
+                    st.markdown(f"🔗 [{bookmark.url}]({bookmark.url})")
+                    
+                    if bookmark.add_date:
+                        st.caption(f"📅 {bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                with col3:
+                    # プレビューボタン
+                    if not is_duplicate:
+                        if st.button("👁️ プレビュー", key=f"preview_{original_index}"):
+                            show_page_preview(bookmark, original_index)
+                    else:
+                        st.caption("重複により除外")
+                
+                st.divider()
+    
+    # 保存ボタンセクション
+    st.markdown("---")
+    st.subheader("💾 ファイル保存")
+    
+    selected_bookmarks = [
+        bookmark for i, bookmark in enumerate(bookmarks) 
+        if st.session_state.selected_pages.get(i, False)
+    ]
+    
+    if selected_bookmarks:
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            if st.button("💾 選択したページを保存", type="primary"):
+                save_selected_pages(selected_bookmarks, output_directory)
+        
+        with col2:
+            st.info(f"💡 {len(selected_bookmarks)}個のページがMarkdownファイルとして保存されます")
+            st.caption(f"保存先: {output_directory}")
+    else:
+        st.warning("⚠️ 保存するページが選択されていません")
+
+
+def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[Bookmark]]:
+    """
+    ブックマークをフォルダ別に整理
+    
+    Args:
+        bookmarks: ブックマーク一覧
+        
+    Returns:
+        Dict[tuple, List[Bookmark]]: フォルダパスをキーとしたブックマーク辞書
+    """
+    folder_groups = {}
+    
+    for bookmark in bookmarks:
+        folder_key = tuple(bookmark.folder_path) if bookmark.folder_path else ()
+        
+        if folder_key not in folder_groups:
+            folder_groups[folder_key] = []
+        
+        folder_groups[folder_key].append(bookmark)
+    
+    # フォルダパスでソート
+    return dict(sorted(folder_groups.items()))
+
+
+def show_page_preview(bookmark: Bookmark, index: int):
+    """
+    ページプレビューを表示
+    
+    Args:
+        bookmark: ブックマーク情報
+        index: ページインデックス
+    """
+    # プレビューデータがキャッシュされているかチェック
+    if index not in st.session_state.preview_cache:
+        with st.spinner(f"🔍 {bookmark.title} の内容を取得中..."):
+            try:
+                # WebScraperを使用してページ内容を取得
+                scraper = WebScraper()
+                html_content = scraper.fetch_page_content(bookmark.url)
+                
+                if html_content:
+                    # 記事内容を抽出
+                    article_data = scraper.extract_article_content(html_content, bookmark.url)
+                    
+                    if article_data:
+                        # MarkdownGeneratorでプレビュー用Markdownを生成
+                        generator = MarkdownGenerator()
+                        markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
+                        
+                        st.session_state.preview_cache[index] = {
+                            'success': True,
+                            'article_data': article_data,
+                            'markdown': markdown_content
+                        }
+                    else:
+                        st.session_state.preview_cache[index] = {
+                            'success': False,
+                            'error': '記事内容の抽出に失敗しました'
+                        }
+                else:
+                    st.session_state.preview_cache[index] = {
+                        'success': False,
+                        'error': 'ページの取得に失敗しました'
+                    }
+            except Exception as e:
+                st.session_state.preview_cache[index] = {
+                    'success': False,
+                    'error': f'エラーが発生しました: {str(e)}'
+                }
+    
+    # プレビューデータを表示
+    preview_data = st.session_state.preview_cache[index]
+    
+    if preview_data['success']:
+        article_data = preview_data['article_data']
+        
+        # プレビュー情報を表示
+        st.subheader(f"📄 {bookmark.title} - プレビュー")
+        
+        # 基本情報
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**URL:** {bookmark.url}")
+            st.markdown(f"**品質スコア:** {article_data.get('quality_score', 'N/A')}")
+        
+        with col2:
+            st.markdown(f"**抽出方法:** {article_data.get('extraction_method', 'N/A')}")
+            content_length = len(article_data.get('content', ''))
+            st.markdown(f"**文字数:** {content_length:,}文字")
+        
+        # タグ表示
+        if article_data.get('tags'):
+            st.markdown("**タグ:** " + ", ".join([f"`{tag}`" for tag in article_data['tags']]))
+        
+        # 記事内容のプレビュー（最初の500文字）
+        content = article_data.get('content', '')
+        if content:
+            st.markdown("**記事内容プレビュー:**")
+            preview_content = content[:500] + "..." if len(content) > 500 else content
+            st.text_area("内容", preview_content, height=200, disabled=True)
+        
+        # 生成されるMarkdownのプレビュー
+        with st.expander("📝 生成されるMarkdownファイル"):
+            st.code(preview_data['markdown'], language='markdown')
+    
+    else:
+        st.error(f"❌ プレビューエラー: {preview_data['error']}")
+        st.info("💡 このページは手動で確認が必要です")
+
+
+def save_selected_pages(selected_bookmarks: List[Bookmark], output_directory: Path):
+    """
+    選択されたページをMarkdownファイルとして保存
+    
+    Args:
+        selected_bookmarks: 選択されたブックマーク一覧
+        output_directory: 出力ディレクトリ
+    """
+    if not selected_bookmarks:
+        st.warning("保存するページが選択されていません")
+        return
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    scraper = WebScraper()
+    generator = MarkdownGenerator()
+    
+    saved_count = 0
+    error_count = 0
+    
+    for i, bookmark in enumerate(selected_bookmarks):
+        progress = (i + 1) / len(selected_bookmarks)
+        progress_bar.progress(progress)
+        status_text.text(f"処理中: {bookmark.title} ({i+1}/{len(selected_bookmarks)})")
+        
+        try:
+            # ページ内容を取得
+            html_content = scraper.fetch_page_content(bookmark.url)
+            
+            if html_content:
+                # 記事内容を抽出
+                article_data = scraper.extract_article_content(html_content, bookmark.url)
+                
+                if article_data:
+                    # Markdownを生成
+                    markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
+                else:
+                    # フォールバック用Markdown
+                    markdown_content = generator._generate_fallback_markdown(bookmark)
+            else:
+                # フォールバック用Markdown
+                markdown_content = generator._generate_fallback_markdown(bookmark)
+            
+            # ファイルパスを生成
+            file_path = generator.generate_file_path(bookmark, output_directory)
+            
+            # ディレクトリを作成
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # ファイルを保存
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+            
+            saved_count += 1
+            logger.info(f"✅ ファイル保存成功: {file_path}")
+            
+        except Exception as e:
+            logger.error(f"❌ ファイル保存エラー: {bookmark.title} - {str(e)}")
+            error_count += 1
+    
+    # 完了メッセージ
+    progress_bar.progress(1.0)
+    status_text.text("保存完了！")
+    
+    if saved_count > 0:
+        st.success(f"✅ {saved_count}個のファイルを保存しました")
+    
+    if error_count > 0:
+        st.warning(f"⚠️ {error_count}個のファイルで保存エラーが発生しました")
+    
+    # 保存先情報
+    st.info(f"📁 保存先: {output_directory}")
+
+
 def main():
     """メインアプリケーション関数"""
     # ページ設定
@@ -2204,6 +2517,11 @@ def main():
                         
                         st.success(f"✅ ブックマーク解析と重複チェックが完了しました！")
                         st.info(f"📊 {len(bookmarks)}個のブックマークが見つかり、{total_to_process}個が処理対象、{total_excluded}個が重複により除外されました。")
+                        
+                        # Task 9: ページ一覧表示とプレビュー機能
+                        if total_to_process > 0:
+                            st.markdown("---")
+                            display_page_list_and_preview(bookmarks, duplicates, st.session_state['output_directory'])
                         
                         # デバッグ情報の表示
                         if len(duplicates['files']) == 0 and len(existing_structure) > 0:
