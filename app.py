@@ -12,8 +12,23 @@ from enum import Enum
 import datetime
 import os
 import re
+import logging
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+
+# ログ設定
+# 環境変数DEBUG=1を設定するとデバッグログも表示
+log_level = logging.DEBUG if os.getenv('DEBUG') == '1' else logging.INFO
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # コンソール出力
+    ]
+)
+logger = logging.getLogger(__name__)
+
+logger.info(f"🚀 アプリケーション開始 (ログレベル: {logging.getLevelName(log_level)})")
 
 
 # データモデル定義
@@ -42,6 +57,268 @@ class Page:
     metadata: Dict = field(default_factory=dict)
     is_selected: bool = True
     status: PageStatus = PageStatus.PENDING
+
+
+class LocalDirectoryManager:
+    """
+    ローカルディレクトリの構造を解析し、重複チェックを行うクラス
+    """
+    
+    def __init__(self, base_path: Path):
+        """
+        LocalDirectoryManagerを初期化
+        
+        Args:
+            base_path: 基準となるディレクトリパス
+        """
+        self.base_path = Path(base_path)
+        self.existing_structure = {}
+        self.duplicate_files = set()
+    
+    def scan_directory(self, path: Optional[str] = None) -> Dict[str, List[str]]:
+        """
+        指定されたディレクトリの既存ファイル構造を読み取る
+        
+        Args:
+            path: スキャン対象のパス（Noneの場合はbase_pathを使用）
+            
+        Returns:
+            Dict[str, List[str]]: ディレクトリパスをキーとしたファイル名一覧
+        """
+        scan_path = Path(path) if path else self.base_path
+        
+        if not scan_path.exists() or not scan_path.is_dir():
+            return {}
+        
+        structure = {}
+        
+        try:
+            # ディレクトリを再帰的にスキャン
+            for root, dirs, files in os.walk(scan_path):
+                # 相対パスを計算
+                relative_root = Path(root).relative_to(scan_path)
+                relative_path = str(relative_root) if str(relative_root) != '.' else ''
+                
+                # Markdownファイルのみを対象とする
+                markdown_files = [
+                    Path(f).stem for f in files 
+                    if f.lower().endswith(('.md', '.markdown'))
+                ]
+                
+                if markdown_files:
+                    structure[relative_path] = markdown_files
+            
+            self.existing_structure = structure
+            return structure
+            
+        except Exception as e:
+            raise RuntimeError(f"ディレクトリスキャンエラー: {str(e)}")
+    
+    def check_file_exists(self, path: str, filename: str) -> bool:
+        """
+        指定されたパスにファイルが存在するかチェック
+        
+        Args:
+            path: ディレクトリパス
+            filename: ファイル名（拡張子なし）
+            
+        Returns:
+            bool: ファイルが存在する場合True
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # パスを正規化
+            normalized_path = path.replace('\\', '/') if path else ''
+            
+            logger.debug(f"    ファイル存在チェック: パス='{normalized_path}', ファイル名='{filename}'")
+            logger.debug(f"    既存構造: {self.existing_structure}")
+            
+            # 既存構造から確認
+            if normalized_path in self.existing_structure:
+                exists_in_structure = filename in self.existing_structure[normalized_path]
+                logger.debug(f"    構造内チェック結果: {exists_in_structure}")
+                if exists_in_structure:
+                    return True
+            
+            # 実際のファイルシステムからも確認
+            full_path = self.base_path / path if path else self.base_path
+            if full_path.exists():
+                md_file = full_path / f"{filename}.md"
+                markdown_file = full_path / f"{filename}.markdown"
+                file_exists = md_file.exists() or markdown_file.exists()
+                logger.debug(f"    ファイルシステムチェック: {md_file} → {md_file.exists()}")
+                logger.debug(f"    ファイルシステムチェック: {markdown_file} → {markdown_file.exists()}")
+                return file_exists
+            
+            logger.debug(f"    結果: ファイル存在しない")
+            return False
+            
+        except Exception as e:
+            logger.error(f"    ファイル存在チェックエラー: {e}")
+            return False
+    
+    def compare_with_bookmarks(self, bookmarks: List[Bookmark]) -> Dict[str, List[str]]:
+        """
+        ブックマーク階層と既存ディレクトリ構造を比較し、重複ファイルを特定
+        
+        Args:
+            bookmarks: ブックマーク一覧
+            
+        Returns:
+            Dict[str, List[str]]: 重複ファイルの情報
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        duplicates = {
+            'files': [],  # 重複ファイル一覧
+            'paths': []   # 重複パス一覧
+        }
+        
+        self.duplicate_files.clear()
+        
+        logger.info(f"重複チェック対象: {len(bookmarks)}個のブックマーク")
+        
+        for i, bookmark in enumerate(bookmarks):
+            # フォルダパスを文字列に変換
+            folder_path = '/'.join(bookmark.folder_path) if bookmark.folder_path else ''
+            
+            # ファイル名を生成（BookmarkParserと同じロジック）
+            filename = self._sanitize_filename(bookmark.title)
+            
+            logger.debug(f"  {i+1}. チェック中: '{bookmark.title}' → '{filename}' (パス: '{folder_path}')")
+            
+            # 重複チェック
+            file_exists = self.check_file_exists(folder_path, filename)
+            logger.debug(f"     ファイル存在チェック結果: {file_exists}")
+            
+            if file_exists:
+                duplicate_info = f"{folder_path}/{filename}" if folder_path else filename
+                duplicates['files'].append(duplicate_info)
+                duplicates['paths'].append(folder_path)
+                
+                # 重複ファイルセットに追加
+                self.duplicate_files.add((folder_path, filename))
+                logger.info(f"  🔄 重複検出: {duplicate_info}")
+        
+        logger.info(f"重複チェック完了: {len(duplicates['files'])}個の重複を検出")
+        return duplicates
+    
+    def is_duplicate(self, bookmark: Bookmark) -> bool:
+        """
+        指定されたブックマークが重複ファイルかどうかを判定
+        
+        Args:
+            bookmark: 判定対象のブックマーク
+            
+        Returns:
+            bool: 重複ファイルの場合True
+        """
+        folder_path = '/'.join(bookmark.folder_path) if bookmark.folder_path else ''
+        filename = self._sanitize_filename(bookmark.title)
+        
+        return (folder_path, filename) in self.duplicate_files
+    
+    def get_duplicate_count(self) -> int:
+        """
+        重複ファイル数を取得
+        
+        Returns:
+            int: 重複ファイル数
+        """
+        return len(self.duplicate_files)
+    
+    def create_directory_structure(self, base_path: str, structure: Dict) -> None:
+        """
+        ディレクトリ構造を自動作成
+        
+        Args:
+            base_path: 基準パス
+            structure: 作成するディレクトリ構造
+        """
+        try:
+            base = Path(base_path)
+            
+            for folder_path in structure.keys():
+                if folder_path:  # 空文字列でない場合
+                    full_path = base / folder_path
+                    full_path.mkdir(parents=True, exist_ok=True)
+                    
+        except Exception as e:
+            raise RuntimeError(f"ディレクトリ作成エラー: {str(e)}")
+    
+    def save_markdown_file(self, path: str, content: str) -> bool:
+        """
+        Markdownファイルをローカルディレクトリに保存
+        
+        Args:
+            path: 保存先パス（base_pathからの相対パス）
+            content: ファイル内容
+            
+        Returns:
+            bool: 保存成功の場合True
+        """
+        try:
+            full_path = self.base_path / path
+            
+            # ディレクトリが存在しない場合は作成
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # ファイルを保存
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            return True
+            
+        except Exception as e:
+            raise RuntimeError(f"ファイル保存エラー: {str(e)}")
+    
+    def _sanitize_filename(self, title: str) -> str:
+        """
+        タイトルから安全なファイル名を生成（BookmarkParserと同じロジック）
+        
+        Args:
+            title: 元のタイトル
+            
+        Returns:
+            str: 安全なファイル名
+        """
+        # 危険な文字を除去・置換（スペースは保持）
+        filename = re.sub(r'[<>:"/\\|?*]', '_', title)
+        
+        # 連続するアンダースコアを単一に
+        filename = re.sub(r'_+', '_', filename)
+        
+        # 前後の空白とアンダースコアを除去
+        filename = filename.strip(' _')
+        
+        # 空の場合はデフォルト名を使用
+        if not filename:
+            filename = 'untitled'
+        
+        # 長すぎる場合は切り詰め（拡張子を考慮して200文字以内）
+        if len(filename) > 200:
+            filename = filename[:200]
+        
+        return filename
+    
+    def get_statistics(self) -> Dict[str, int]:
+        """
+        ディレクトリ統計情報を取得
+        
+        Returns:
+            Dict[str, int]: 統計情報
+        """
+        total_files = sum(len(files) for files in self.existing_structure.values())
+        total_directories = len(self.existing_structure)
+        
+        return {
+            'total_files': total_files,
+            'total_directories': total_directories,
+            'duplicate_files': len(self.duplicate_files)
+        }
 
 
 class BookmarkParser:
@@ -279,7 +556,7 @@ class BookmarkParser:
         Returns:
             str: 安全なファイル名
         """
-        # 危険な文字を除去・置換
+        # 危険な文字を除去・置換（スペースは保持）
         filename = re.sub(r'[<>:"/\\|?*]', '_', title)
         
         # 連続するアンダースコアを単一に
@@ -436,14 +713,17 @@ def main():
         
         # ファイル検証結果の表示
         if uploaded_file is not None:
+            logger.info(f"📁 ファイルアップロード: {uploaded_file.name} (サイズ: {uploaded_file.size} bytes)")
             is_valid_file, file_message = validate_bookmarks_file(uploaded_file)
             if is_valid_file:
                 st.success(file_message)
+                logger.info(f"✅ ファイル検証成功: {file_message}")
                 # セッション状態にファイルを保存
                 st.session_state['uploaded_file'] = uploaded_file
                 st.session_state['file_validated'] = True
             else:
                 st.error(file_message)
+                logger.error(f"❌ ファイル検証失敗: {file_message}")
                 st.session_state['file_validated'] = False
         else:
             st.session_state['file_validated'] = False
@@ -464,14 +744,17 @@ def main():
         
         # ディレクトリ検証結果の表示
         if directory_path:
+            logger.info(f"📂 ディレクトリ指定: {directory_path}")
             is_valid_dir, dir_message = validate_directory_path(directory_path)
             if is_valid_dir:
                 st.success(dir_message)
+                logger.info(f"✅ ディレクトリ検証成功: {directory_path}")
                 # セッション状態にディレクトリパスを保存
                 st.session_state['output_directory'] = Path(directory_path)
                 st.session_state['directory_validated'] = True
             else:
                 st.error(dir_message)
+                logger.error(f"❌ ディレクトリ検証失敗: {dir_message}")
                 st.session_state['directory_validated'] = False
         else:
             st.session_state['directory_validated'] = False
@@ -526,40 +809,138 @@ def main():
                     
                     # ブックマーク解析の実行
                     with st.spinner("ブックマークを解析中..."):
+                        logger.info("📊 ブックマーク解析を開始...")
                         parser = BookmarkParser()
                         bookmarks = parser.parse_bookmarks(content)
+                        logger.info(f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出")
                         
                         # セッション状態に保存
                         st.session_state['bookmarks'] = bookmarks
                         st.session_state['parser'] = parser
+                        
+                        # ローカルディレクトリ管理の初期化と重複チェック
+                        output_directory = st.session_state['output_directory']
+                        logger.info(f"📂 ディレクトリスキャン開始: {output_directory}")
+                        directory_manager = LocalDirectoryManager(output_directory)
+                        
+                        # 既存ディレクトリ構造をスキャン
+                        existing_structure = directory_manager.scan_directory()
+                        logger.info(f"📁 既存ファイル検出: {sum(len(files) for files in existing_structure.values())}個のMarkdownファイル")
+                        
+                        # 既存構造の詳細をログ出力
+                        for path, files in existing_structure.items():
+                            path_display = path if path else "(ルート)"
+                            logger.info(f"  📁 {path_display}: {files}")
+                        
+                        # ブックマークとの重複チェック
+                        logger.info("🔄 重複チェック開始...")
+                        duplicates = directory_manager.compare_with_bookmarks(bookmarks)
+                        logger.info(f"🔄 重複チェック完了: {len(duplicates['files'])}個の重複ファイルを検出")
+                        
+                        # 重複ファイルの詳細をログ出力
+                        if duplicates['files']:
+                            logger.info("重複ファイル一覧:")
+                            for duplicate in duplicates['files']:
+                                logger.info(f"  🔄 {duplicate}")
+                        
+                        # セッション状態に保存
+                        st.session_state['directory_manager'] = directory_manager
+                        st.session_state['existing_structure'] = existing_structure
+                        st.session_state['duplicates'] = duplicates
                     
                     # 解析結果の表示
                     if bookmarks:
                         stats = parser.get_statistics(bookmarks)
                         
                         # 統計情報の表示
-                        col_stat1, col_stat2, col_stat3 = st.columns(3)
+                        directory_manager = st.session_state['directory_manager']
+                        dir_stats = directory_manager.get_statistics()
+                        duplicates = st.session_state['duplicates']
+                        
+                        logger.info("📊 統計情報:")
+                        logger.info(f"  📚 総ブックマーク数: {stats['total_bookmarks']}")
+                        logger.info(f"  🌐 ユニークドメイン数: {stats['unique_domains']}")
+                        logger.info(f"  📁 フォルダ数: {stats['folder_count']}")
+                        logger.info(f"  🔄 重複ファイル数: {len(duplicates['files'])}")
+                        
+                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
                         with col_stat1:
                             st.metric("📚 総ブックマーク数", stats['total_bookmarks'])
                         with col_stat2:
                             st.metric("🌐 ユニークドメイン数", stats['unique_domains'])
                         with col_stat3:
                             st.metric("📁 フォルダ数", stats['folder_count'])
+                        with col_stat4:
+                            st.metric("🔄 重複ファイル数", len(duplicates['files']))
+                        
+                        # 重複チェック結果の表示
+                        st.subheader("🔄 重複チェック結果")
+                        existing_structure = st.session_state['existing_structure']
+                        
+                        if existing_structure:
+                            st.info(f"📂 既存ディレクトリから {dir_stats['total_files']} 個のMarkdownファイルを検出しました")
+                            
+                            if duplicates['files']:
+                                st.warning(f"⚠️ {len(duplicates['files'])} 個の重複ファイルが見つかりました")
+                                
+                                with st.expander("重複ファイル一覧を表示"):
+                                    for duplicate_file in duplicates['files'][:20]:  # 最初の20個を表示
+                                        st.write(f"  - 🔄 {duplicate_file}")
+                                    if len(duplicates['files']) > 20:
+                                        st.write(f"  ... 他 {len(duplicates['files']) - 20}個")
+                                
+                                st.info("💡 重複ファイルは自動的に処理対象から除外されます")
+                            else:
+                                st.success("✅ 重複ファイルは見つかりませんでした")
+                        else:
+                            st.info("📂 保存先ディレクトリは空です（新規作成）")
                         
                         # ディレクトリ構造の表示
-                        st.subheader("📂 ディレクトリ構造")
+                        st.subheader("📂 ブックマーク構造")
                         directory_structure = parser.extract_directory_structure(bookmarks)
                         
+                        # 処理対象と除外対象を分けて表示
+                        total_to_process = 0
+                        total_excluded = 0
+                        
                         for folder_path, filenames in directory_structure.items():
+                            # このフォルダ内の重複ファイル数を計算
                             if folder_path:
-                                st.write(f"**📁 {folder_path}** ({len(filenames)}個のファイル)")
-                                with st.expander(f"ファイル一覧を表示"):
-                                    for filename in filenames[:10]:  # 最初の10個のみ表示
-                                        st.write(f"  - {filename}")
-                                    if len(filenames) > 10:
-                                        st.write(f"  ... 他 {len(filenames) - 10}個")
+                                folder_duplicates = [f for f in duplicates['files'] 
+                                                   if f.startswith(folder_path + '/')]
                             else:
-                                st.write(f"**📄 ルートディレクトリ** ({len(filenames)}個のファイル)")
+                                folder_duplicates = [f for f in duplicates['files'] 
+                                                   if '/' not in f]
+                            
+                            excluded_count = len([f for f in filenames 
+                                                if directory_manager.check_file_exists(folder_path, f)])
+                            process_count = len(filenames) - excluded_count
+                            
+                            total_to_process += process_count
+                            total_excluded += excluded_count
+                            
+                            if folder_path:
+                                status_text = f"📁 {folder_path}"
+                                if excluded_count > 0:
+                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
+                                else:
+                                    status_text += f" ({process_count}個処理予定)"
+                                st.write(f"**{status_text}**")
+                            else:
+                                status_text = f"📄 ルートディレクトリ"
+                                if excluded_count > 0:
+                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
+                                else:
+                                    status_text += f" ({process_count}個処理予定)"
+                                st.write(f"**{status_text}**")
+                        
+                        # 処理予定の統計を表示
+                        st.markdown("---")
+                        col_process1, col_process2 = st.columns(2)
+                        with col_process1:
+                            st.metric("✅ 処理予定ファイル", total_to_process)
+                        with col_process2:
+                            st.metric("🔄 除外ファイル", total_excluded)
                         
                         # サンプルブックマークの表示
                         st.subheader("📋 ブックマークサンプル")
@@ -572,7 +953,35 @@ def main():
                                 if bookmark.add_date:
                                     st.write(f"**追加日:** {bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}")
                         
-                        st.success(f"✅ ブックマーク解析が完了しました！{len(bookmarks)}個のブックマークが見つかりました。")
+                        st.success(f"✅ ブックマーク解析と重複チェックが完了しました！")
+                        st.info(f"📊 {len(bookmarks)}個のブックマークが見つかり、{total_to_process}個が処理対象、{total_excluded}個が重複により除外されました。")
+                        
+                        # デバッグ情報の表示
+                        if len(duplicates['files']) == 0 and len(existing_structure) > 0:
+                            st.warning("⚠️ 既存ファイルがあるのに重複が検出されませんでした。デバッグ情報を確認してください。")
+                            
+                            with st.expander("🔍 デバッグ情報"):
+                                st.write("**既存ファイル例（最初の5個）:**")
+                                file_count = 0
+                                for path, files in existing_structure.items():
+                                    for file in files:
+                                        if file_count >= 5:
+                                            break
+                                        path_display = path if path else "(ルート)"
+                                        st.write(f"- {path_display}/{file}")
+                                        file_count += 1
+                                    if file_count >= 5:
+                                        break
+                                
+                                st.write("**ブックマークタイトル例（最初の5個）:**")
+                                for i, bookmark in enumerate(bookmarks[:5]):
+                                    folder_display = " > ".join(bookmark.folder_path) if bookmark.folder_path else "(ルート)"
+                                    st.write(f"- {folder_display}/{bookmark.title}")
+                                
+                                st.write("**サニタイズ後のファイル名例:**")
+                                for i, bookmark in enumerate(bookmarks[:5]):
+                                    sanitized = parser._sanitize_filename(bookmark.title)
+                                    st.write(f"- '{bookmark.title}' → '{sanitized}'")
                         
                     else:
                         st.warning("⚠️ 有効なブックマークが見つかりませんでした。")
@@ -637,11 +1046,23 @@ def main():
             st.info("👈 サイドバーで設定してください")
         
         # 統計情報の表示
-        if 'bookmarks' in st.session_state:
+        if 'bookmarks' in st.session_state and 'directory_manager' in st.session_state:
+            bookmarks = st.session_state['bookmarks']
+            directory_manager = st.session_state['directory_manager']
+            
+            # 処理対象と除外対象を計算
+            total_bookmarks = len(bookmarks)
+            excluded_count = sum(1 for bookmark in bookmarks if directory_manager.is_duplicate(bookmark))
+            process_count = total_bookmarks - excluded_count
+            
+            st.metric("処理対象ページ", process_count)
+            st.metric("除外ページ", excluded_count)
+            st.metric("完了ページ", "0")  # 今後の実装で更新
+        elif 'bookmarks' in st.session_state:
             bookmarks = st.session_state['bookmarks']
             st.metric("処理対象ページ", len(bookmarks))
-            st.metric("除外ページ", "0")  # 今後の実装で更新
-            st.metric("完了ページ", "0")  # 今後の実装で更新
+            st.metric("除外ページ", "0")
+            st.metric("完了ページ", "0")
         else:
             st.metric("処理対象ページ", "0")
             st.metric("除外ページ", "0")
