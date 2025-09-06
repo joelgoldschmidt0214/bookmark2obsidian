@@ -13,7 +13,10 @@ import datetime
 import os
 import re
 import logging
+import time
+import requests
 from urllib.parse import urlparse
+from urllib.robotparser import RobotFileParser
 from bs4 import BeautifulSoup
 
 # ログ設定
@@ -634,6 +637,341 @@ class BookmarkParser:
             'total_bookmarks': total_bookmarks,
             'unique_domains': unique_domains,
             'folder_count': folder_count
+        }
+
+
+class WebScraper:
+    """
+    Webページ取得・解析クラス
+    robots.txt確認、レート制限、記事本文抽出機能を提供
+    """
+    
+    def __init__(self):
+        """WebScraperを初期化"""
+        self.domain_last_access = {}  # ドメインごとの最終アクセス時刻
+        self.rate_limit_delay = 3  # デフォルトの待ち時間（秒）
+        self.timeout = 10  # リクエストタイムアウト（秒）
+        self.user_agent = "Mozilla/5.0 (compatible; BookmarkToObsidian/1.0; +https://github.com/user/bookmark-to-obsidian)"
+        
+        # セッション設定
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': self.user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        
+        logger.info(f"🌐 WebScraper初期化完了 (User-Agent: {self.user_agent})")
+    
+    def check_robots_txt(self, domain: str) -> bool:
+        """
+        指定されたドメインのrobots.txtを確認し、スクレイピングが許可されているかチェック
+        
+        Args:
+            domain: 確認対象のドメイン
+            
+        Returns:
+            bool: スクレイピングが許可されている場合True
+        """
+        try:
+            robots_url = f"https://{domain}/robots.txt"
+            logger.debug(f"🤖 robots.txt確認: {robots_url}")
+            
+            # RobotFileParserを使用してrobots.txtを解析
+            rp = RobotFileParser()
+            rp.set_url(robots_url)
+            
+            # robots.txtを読み込み（タイムアウト付き）
+            try:
+                rp.read()
+                
+                # User-Agentに対してアクセス許可をチェック
+                # 一般的なクローラー名とカスタムUser-Agentの両方をチェック
+                user_agents_to_check = [
+                    self.user_agent,
+                    "*",  # 全てのUser-Agent
+                    "Mozilla/5.0",  # 一般的なブラウザ
+                ]
+                
+                for ua in user_agents_to_check:
+                    if rp.can_fetch(ua, "/"):
+                        logger.debug(f"✅ robots.txt許可: {domain} (User-Agent: {ua})")
+                        return True
+                
+                logger.info(f"🚫 robots.txt拒否: {domain}")
+                return False
+                
+            except Exception as e:
+                # robots.txtが存在しない、またはアクセスできない場合は許可とみなす
+                logger.debug(f"⚠️ robots.txt読み込みエラー（許可として処理）: {domain} - {str(e)}")
+                return True
+                
+        except Exception as e:
+            # エラーが発生した場合は安全側に倒して許可とみなす
+            logger.debug(f"⚠️ robots.txtチェックエラー（許可として処理）: {domain} - {str(e)}")
+            return True
+    
+    def fetch_page_content(self, url: str) -> Optional[str]:
+        """
+        指定されたURLからWebページのHTMLソースコードを取得
+        
+        Args:
+            url: 取得対象のURL
+            
+        Returns:
+            Optional[str]: 取得されたHTMLコンテンツ（失敗時はNone）
+        """
+        try:
+            # URLの解析
+            parsed_url = urlparse(url)
+            domain = parsed_url.netloc.lower()
+            
+            logger.debug(f"🌐 ページ取得開始: {url}")
+            
+            # robots.txtチェック
+            if not self.check_robots_txt(domain):
+                logger.info(f"🚫 robots.txt拒否によりスキップ: {url}")
+                return None
+            
+            # レート制限の適用
+            self.apply_rate_limiting(domain)
+            
+            # HTTPリクエストの実行
+            response = self.session.get(
+                url,
+                timeout=self.timeout,
+                allow_redirects=True,
+                verify=True  # SSL証明書検証を有効化
+            )
+            
+            # ステータスコードの確認
+            response.raise_for_status()
+            
+            # 文字エンコーディングの自動検出
+            if response.encoding is None:
+                response.encoding = response.apparent_encoding
+            
+            # HTMLコンテンツを取得
+            html_content = response.text
+            
+            logger.debug(f"✅ ページ取得成功: {url} (サイズ: {len(html_content)} 文字)")
+            
+            # 最終アクセス時刻を更新
+            self.domain_last_access[domain] = time.time()
+            
+            return html_content
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"⏰ タイムアウト: {url}")
+            return None
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"🔌 接続エラー: {url}")
+            return None
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"🚫 HTTPエラー: {url} - {e}")
+            return None
+        except requests.exceptions.SSLError:
+            logger.warning(f"🔒 SSL証明書エラー: {url}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ ページ取得エラー: {url} - {str(e)}")
+            return None
+    
+    def extract_article_content(self, html: str, url: str = "") -> Optional[Dict]:
+        """
+        HTMLから記事本文とメタデータを抽出
+        
+        Args:
+            html: HTMLコンテンツ
+            url: 元のURL（ログ用）
+            
+        Returns:
+            Optional[Dict]: 抽出された記事データ（失敗時はNone）
+        """
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # 記事データの初期化
+            article_data = {
+                'title': '',
+                'content': '',
+                'tags': [],
+                'metadata': {}
+            }
+            
+            # タイトルの抽出
+            title_tag = soup.find('title')
+            if title_tag:
+                article_data['title'] = title_tag.get_text(strip=True)
+            
+            # メタデータの抽出
+            meta_tags = soup.find_all('meta')
+            for meta in meta_tags:
+                name = meta.get('name', '').lower()
+                property_attr = meta.get('property', '').lower()
+                content = meta.get('content', '')
+                
+                if content:
+                    if name in ['description', 'keywords', 'author']:
+                        article_data['metadata'][name] = content
+                    elif property_attr.startswith('og:'):
+                        article_data['metadata'][property_attr] = content
+                    elif property_attr.startswith('article:'):
+                        article_data['metadata'][property_attr] = content
+            
+            # 記事本文の抽出（複数の方法を試行）
+            content_selectors = [
+                'article',
+                '[role="main"]',
+                'main',
+                '.content',
+                '.post-content',
+                '.entry-content',
+                '.article-content',
+                '#content',
+                '#main-content',
+                '.main-content'
+            ]
+            
+            article_content = None
+            
+            for selector in content_selectors:
+                elements = soup.select(selector)
+                if elements:
+                    # 最も長いコンテンツを選択
+                    longest_element = max(elements, key=lambda x: len(x.get_text()))
+                    if len(longest_element.get_text(strip=True)) > 100:  # 最小文字数チェック
+                        article_content = longest_element
+                        logger.debug(f"📄 記事本文検出: {selector} (文字数: {len(longest_element.get_text())})")
+                        break
+            
+            # 記事本文が見つからない場合はbodyタグから抽出
+            if not article_content:
+                body = soup.find('body')
+                if body:
+                    # 不要な要素を除去
+                    for unwanted in body.select('nav, header, footer, aside, .sidebar, .navigation, .menu, script, style, .advertisement, .ads'):
+                        unwanted.decompose()
+                    
+                    if len(body.get_text(strip=True)) > 100:
+                        article_content = body
+                        logger.debug(f"📄 記事本文をbodyから抽出 (文字数: {len(body.get_text())})")
+            
+            # 記事本文の処理
+            if article_content:
+                # 不要な要素をさらに除去
+                for unwanted in article_content.select('script, style, .share-buttons, .social-share, .comments, .related-posts'):
+                    unwanted.decompose()
+                
+                # テキストコンテンツを抽出
+                text_content = article_content.get_text(separator='\n', strip=True)
+                
+                # 空行を整理
+                lines = [line.strip() for line in text_content.split('\n') if line.strip()]
+                article_data['content'] = '\n\n'.join(lines)
+                
+                # 最小文字数チェック
+                if len(article_data['content']) < 50:
+                    logger.warning(f"⚠️ 記事本文が短すぎます: {url} (文字数: {len(article_data['content'])})")
+                    return None
+                
+                logger.debug(f"✅ 記事本文抽出成功: {url} (文字数: {len(article_data['content'])})")
+                return article_data
+            else:
+                logger.warning(f"⚠️ 記事本文が見つかりません: {url}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ 記事本文抽出エラー: {url} - {str(e)}")
+            return None
+    
+    def group_urls_by_domain(self, urls: List[str]) -> Dict[str, List[str]]:
+        """
+        URLリストをドメインごとにグループ化
+        
+        Args:
+            urls: URL一覧
+            
+        Returns:
+            Dict[str, List[str]]: ドメインをキーとしたURL一覧
+        """
+        domain_groups = {}
+        
+        for url in urls:
+            try:
+                parsed_url = urlparse(url)
+                domain = parsed_url.netloc.lower()
+                
+                if domain not in domain_groups:
+                    domain_groups[domain] = []
+                
+                domain_groups[domain].append(url)
+                
+            except Exception as e:
+                logger.warning(f"⚠️ URL解析エラー: {url} - {str(e)}")
+                continue
+        
+        logger.info(f"🌐 ドメイングループ化完了: {len(domain_groups)}個のドメイン")
+        for domain, domain_urls in domain_groups.items():
+            logger.debug(f"  📍 {domain}: {len(domain_urls)}個のURL")
+        
+        return domain_groups
+    
+    def apply_rate_limiting(self, domain: str) -> None:
+        """
+        指定されたドメインに対してレート制限を適用
+        
+        Args:
+            domain: 対象ドメイン
+        """
+        current_time = time.time()
+        
+        if domain in self.domain_last_access:
+            time_since_last_access = current_time - self.domain_last_access[domain]
+            
+            if time_since_last_access < self.rate_limit_delay:
+                sleep_time = self.rate_limit_delay - time_since_last_access
+                logger.debug(f"⏳ レート制限待機: {domain} ({sleep_time:.1f}秒)")
+                time.sleep(sleep_time)
+        
+        # 最終アクセス時刻を更新
+        self.domain_last_access[domain] = time.time()
+    
+    def set_rate_limit_delay(self, delay: float) -> None:
+        """
+        レート制限の待ち時間を設定
+        
+        Args:
+            delay: 待ち時間（秒）
+        """
+        self.rate_limit_delay = max(1.0, delay)  # 最小1秒
+        logger.info(f"⏳ レート制限設定: {self.rate_limit_delay}秒")
+    
+    def set_timeout(self, timeout: int) -> None:
+        """
+        リクエストタイムアウトを設定
+        
+        Args:
+            timeout: タイムアウト時間（秒）
+        """
+        self.timeout = max(5, timeout)  # 最小5秒
+        logger.info(f"⏰ タイムアウト設定: {self.timeout}秒")
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        WebScraper統計情報を取得
+        
+        Returns:
+            Dict[str, Any]: 統計情報
+        """
+        return {
+            'domains_accessed': len(self.domain_last_access),
+            'rate_limit_delay': self.rate_limit_delay,
+            'timeout': self.timeout,
+            'user_agent': self.user_agent
         }
 
 
