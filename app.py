@@ -2889,25 +2889,25 @@ def show_page_preview(bookmark: Bookmark, index: int):
             if bookmark.folder_path:
                 folder_path = " > ".join(bookmark.folder_path)
                 st.markdown(f"**📁 フォルダ:** {folder_path}")
+        
+        # ページの状態
+        if page.status == PageStatus.SUCCESS and page.content:
+            st.success("✅ 記事内容の取得に成功")
             
-            # ページの状態
-            if page.status == PageStatus.SUCCESS and page.content:
-                st.success("✅ 記事内容の取得に成功")
-                
-                # コンテンツプレビュー（幅を制限）
-                with st.expander("📖 記事内容プレビュー", expanded=True):
-                    # 記事の最初の500文字を表示
-                    preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
-                    st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
-                
-                # タグ情報
-                if page.tags:
-                    st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
-                
-                # メタデータ
-                if page.metadata:
-                    with st.expander("📊 メタデータ"):
-                        st.json(page.metadata)
+            # コンテンツプレビュー（幅を制限）
+            with st.expander("📖 記事内容プレビュー", expanded=True):
+                # 記事の最初の500文字を表示
+                preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
+                st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
+            
+            # タグ情報
+            if page.tags:
+                st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
+            
+            # メタデータ
+            if page.metadata:
+                with st.expander("📊 メタデータ"):
+                    st.json(page.metadata)
                     
         elif page.status == PageStatus.ERROR:
             st.error("❌ 記事内容の取得に失敗")
