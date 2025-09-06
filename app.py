@@ -354,31 +354,52 @@ class BookmarkParser:
         except Exception as e:
             raise ValueError(f"ブックマーク解析エラー: {str(e)}")
     
-    def _parse_dl_element(self, dl_element, current_path: List[str]) -> List[Bookmark]:
+    def _parse_dl_element(self, dl_element, current_path: List[str], processed_dls=None) -> List[Bookmark]:
         """
         DLエレメントを愚直に解析してブックマークを抽出
         
         Args:
             dl_element: BeautifulSoupのDLエレメント
             current_path: 現在のフォルダパス
+            processed_dls: 処理済みのDLエレメントのセット
             
         Returns:
             List[Bookmark]: 抽出されたブックマーク一覧
         """
+        if processed_dls is None:
+            processed_dls = set()
+        
+        # 既に処理済みの場合はスキップ
+        if id(dl_element) in processed_dls:
+            return []
+        
+        # 処理済みとしてマーク
+        processed_dls.add(id(dl_element))
+        
         bookmarks = []
         
         # DLエレメント内のDTを処理（Pタグ内にある場合も考慮）
         # まず、このDLレベルのDTエレメントを取得
         all_dt_in_dl = dl_element.find_all('dt')
         
-        # ネストしたDL内のDTエレメントを除外
-        nested_dls = dl_element.find_all('dl')[1:]  # 最初のDLは自分自身なので除外
-        nested_dt_elements = set()
-        for nested_dl in nested_dls:
-            nested_dt_elements.update(nested_dl.find_all('dt'))
-        
-        # このDLレベルのDTエレメントのみを処理
-        direct_dt_elements = [dt for dt in all_dt_in_dl if dt not in nested_dt_elements]
+        # このDLの直接の子DTエレメントのみを取得（pタグ内も含む）
+        direct_dt_elements = []
+        for child in dl_element.children:
+            if hasattr(child, 'name'):
+                if child.name == 'dt':
+                    direct_dt_elements.append(child)
+                elif child.name == 'p':
+                    # P要素内のすべてのDTエレメントを取得（ネストしたDL内のものは除く）
+                    all_p_dts = child.find_all('dt')
+                    
+                    # ネストしたDL内のDTを除外
+                    nested_dls_in_p = child.find_all('dl')
+                    nested_dt_in_p = set()
+                    for nested_dl in nested_dls_in_p:
+                        nested_dt_in_p.update(nested_dl.find_all('dt'))
+                    
+                    p_dt_elements = [dt for dt in all_p_dts if dt not in nested_dt_in_p]
+                    direct_dt_elements.extend(p_dt_elements)
         
         for dt in direct_dt_elements:
             # DTの次の兄弟要素がDDかどうかをチェック
@@ -394,15 +415,27 @@ class BookmarkParser:
                     # DD内のDLを再帰的に処理
                     nested_dl = next_sibling.find('dl')
                     if nested_dl:
-                        nested_bookmarks = self._parse_dl_element(nested_dl, new_path)
+                        nested_bookmarks = self._parse_dl_element(nested_dl, new_path, processed_dls)
                         bookmarks.extend(nested_bookmarks)
             else:
-                # DTの後にDDがない場合 → ブックマーク
-                a_tag = dt.find('a')
-                if a_tag:
-                    bookmark = self._extract_bookmark_from_a_tag(a_tag, current_path)
-                    if bookmark and not self._should_exclude_bookmark(bookmark):
-                        bookmarks.append(bookmark)
+                # DTの後にDDがない場合の処理
+                # H3タグがあり、内部にDLがある場合はフォルダとして処理
+                h3 = dt.find('h3')
+                internal_dl = dt.find('dl')
+                
+                if h3 and internal_dl:
+                    # DTの内部にフォルダ構造がある場合（ブックマークバーなど）
+                    folder_name = h3.get_text(strip=True)
+                    new_path = current_path + [folder_name]
+                    nested_bookmarks = self._parse_dl_element(internal_dl, new_path, processed_dls)
+                    bookmarks.extend(nested_bookmarks)
+                else:
+                    # 通常のブックマーク
+                    a_tag = dt.find('a')
+                    if a_tag:
+                        bookmark = self._extract_bookmark_from_a_tag(a_tag, current_path)
+                        if bookmark and not self._should_exclude_bookmark(bookmark):
+                            bookmarks.append(bookmark)
         
         return bookmarks
     
