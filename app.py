@@ -2747,16 +2747,20 @@ def display_bookmark_tree(bookmarks: List[Bookmark], folder_groups: Dict[tuple, 
     for folder_path in sorted_folders:
         folder_bookmarks = folder_groups[folder_path]
         
-        # フォルダ名の表示を改善
+        # フォルダ名の表示を改善（真のツリー表示）
         if not folder_path:
             folder_display = "📁 ルートフォルダ"
-            folder_icon = "📁"
         else:
-            # 階層の深さに応じてインデントを追加
-            indent = "　" * (len(folder_path) - 1)
-            folder_name = folder_path[-1]  # 最後のフォルダ名のみ表示
-            folder_display = f"{indent}📂 {folder_name}"
-            folder_icon = "📂"
+            # 階層構造を視覚的に表現
+            indent_level = len(folder_path) - 1
+            indent = "　　" * indent_level  # 全角スペースでインデント
+            folder_name = folder_path[-1]
+            
+            # ツリー構造の記号を追加
+            if indent_level == 0:
+                folder_display = f"📂 {folder_name}"
+            else:
+                folder_display = f"{indent}└─ 📂 {folder_name}"
         
         # フォルダ内の選択状況を計算
         folder_indices = [bookmarks.index(bookmark) for bookmark in folder_bookmarks]
@@ -2836,7 +2840,8 @@ def display_bookmark_tree(bookmarks: List[Bookmark], folder_groups: Dict[tuple, 
                     # プレビューボタンの改善
                     if not is_duplicate:
                         if st.button("👁️", key=f"preview_{original_index}", help="プレビュー表示"):
-                            show_page_preview(bookmark, original_index)
+                            st.session_state['preview_bookmark'] = bookmark
+                            st.session_state['preview_index'] = original_index
                     else:
                         st.caption("除外")
 
@@ -2865,23 +2870,139 @@ def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[
     return dict(sorted(folder_groups.items()))
 
 
+def display_bookmark_structure_tree(directory_structure: Dict[str, List[str]], duplicates: Dict, directory_manager) -> tuple[int, int]:
+    """
+    ブックマーク構造をツリー形式で表示
+    
+    Args:
+        directory_structure: ディレクトリ構造辞書
+        duplicates: 重複ファイル情報
+        directory_manager: ディレクトリマネージャー
+        
+    Returns:
+        tuple[int, int]: (処理予定数, 除外数)
+    """
+    # フォルダ構造を階層的に整理
+    folder_tree = {}
+    folder_stats = {}  # フォルダごとの統計情報
+    total_to_process = 0
+    total_excluded = 0
+    
+    # 各フォルダパスを解析してツリー構造を構築
+    for folder_path, filenames in directory_structure.items():
+        # 重複ファイル数を計算
+        excluded_count = len([f for f in filenames 
+                            if directory_manager.check_file_exists(folder_path, f)])
+        process_count = len(filenames) - excluded_count
+        
+        total_to_process += process_count
+        total_excluded += excluded_count
+        
+        # 統計情報を保存
+        folder_stats[folder_path] = {
+            'process_count': process_count,
+            'excluded_count': excluded_count
+        }
+        
+        # フォルダパスを分割
+        if folder_path:
+            path_parts = folder_path.split('/')
+        else:
+            path_parts = ['ROOT']  # ルートディレクトリ
+        
+        # ツリー構造に追加
+        current_level = folder_tree
+        for i, part in enumerate(path_parts):
+            if part not in current_level:
+                current_level[part] = {}
+            current_level = current_level[part]
+    
+    # ツリー構造を表示
+    _display_tree_recursive(folder_tree, folder_stats, directory_structure, "", True, "")
+    
+    return total_to_process, total_excluded
+
+
+def _display_tree_recursive(tree_dict: Dict, folder_stats: Dict, directory_structure: Dict, prefix: str, is_root: bool, current_path: str = ""):
+    """
+    ツリー構造を再帰的に表示
+    
+    Args:
+        tree_dict: ツリー辞書
+        folder_stats: フォルダ統計情報
+        directory_structure: 元のディレクトリ構造
+        prefix: 現在の行のプレフィックス
+        is_root: ルートレベルかどうか
+        current_path: 現在のパス
+    """
+    items = list(tree_dict.items())
+    
+    for i, (name, children) in enumerate(items):
+        is_last_item = (i == len(items) - 1)
+        
+        # 現在のフォルダパスを構築
+        if name == 'ROOT':
+            folder_path = ""
+            display_name = "📄 ルートディレクトリ"
+        else:
+            if current_path:
+                folder_path = f"{current_path}/{name}"
+            else:
+                folder_path = name
+            display_name = f"📁 {name}"
+        
+        # ツリー記号を決定
+        if is_root and name == 'ROOT':
+            tree_symbol = ""
+            next_prefix = ""
+        elif is_last_item:
+            tree_symbol = "└── "
+            next_prefix = prefix + "    "
+        else:
+            tree_symbol = "├── "
+            next_prefix = prefix + "│   "
+        
+        # 統計情報を追加
+        if folder_path in folder_stats:
+            stats = folder_stats[folder_path]
+            files_count = stats['process_count']
+            excluded_count = stats['excluded_count']
+            
+            if excluded_count > 0:
+                stats_text = f" ({files_count}個処理予定, {excluded_count}個除外)"
+            else:
+                stats_text = f" ({files_count}個処理予定)"
+            
+            display_name += stats_text
+        
+        # 表示
+        if is_root and name == 'ROOT':
+            st.write(f"`{display_name}`")
+        else:
+            st.write(f"`{prefix}{tree_symbol}{display_name}`")
+        
+        # 子要素がある場合は再帰的に表示
+        if children:
+            _display_tree_recursive(children, folder_stats, directory_structure, next_prefix, False, folder_path)
+
+
 def show_page_preview(bookmark: Bookmark, index: int):
     """
-    既存の解析結果を使用したプレビュー表示機能
+    ブックマーク情報のプレビュー表示機能
     
     Args:
         bookmark: ブックマーク情報
         index: ページインデックス
     """
-    # 既存の解析結果があるかチェック
-    if 'processed_pages' in st.session_state and index < len(st.session_state.processed_pages):
-        page = st.session_state.processed_pages[index]
+    # 右ペインにプレビューを表示するため、専用のコンテナを使用
+    with st.container():
+        st.markdown("---")
+        st.markdown(f"### 📄 {bookmark.title}")
         
-        # プレビュー情報を表示（幅を改善）
-        with st.container():
-            st.markdown("---")
-            st.markdown(f"### 📄 {bookmark.title}")
-            
+        # 基本情報
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
             # URL情報
             st.markdown(f"**🔗 URL:** [{bookmark.url}]({bookmark.url})")
             
@@ -2889,41 +3010,83 @@ def show_page_preview(bookmark: Bookmark, index: int):
             if bookmark.folder_path:
                 folder_path = " > ".join(bookmark.folder_path)
                 st.markdown(f"**📁 フォルダ:** {folder_path}")
+            else:
+                st.markdown(f"**📁 フォルダ:** ルート")
+            
+            # 追加日時
+            if bookmark.add_date:
+                st.markdown(f"**📅 追加日:** {bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # ページの状態
-        if page.status == PageStatus.SUCCESS and page.content:
-            st.success("✅ 記事内容の取得に成功")
+        with col2:
+            # URLの種類を判定
+            from urllib.parse import urlparse
+            parsed_url = urlparse(bookmark.url)
+            domain = parsed_url.netloc
             
-            # コンテンツプレビュー（幅を制限）
-            with st.expander("📖 記事内容プレビュー", expanded=True):
-                # 記事の最初の500文字を表示
-                preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
-                st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
+            st.markdown(f"**🌐 ドメイン:** {domain}")
             
-            # タグ情報
-            if page.tags:
-                st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
+            # パスの深さ
+            path_depth = len([p for p in parsed_url.path.split('/') if p])
+            st.markdown(f"**📊 パス深度:** {path_depth}")
+        
+        # 処理済みページがある場合の詳細情報
+        if 'processed_pages' in st.session_state and index < len(st.session_state.processed_pages):
+            page = st.session_state.processed_pages[index]
             
-            # メタデータ
-            if page.metadata:
-                with st.expander("📊 メタデータ"):
-                    st.json(page.metadata)
-                    
-        elif page.status == PageStatus.ERROR:
-            st.error("❌ 記事内容の取得に失敗")
-            st.markdown("このページは基本情報のみで保存されます。")
+            st.markdown("### 📊 処理結果")
             
-        elif page.status == PageStatus.EXCLUDED:
-            st.warning("⚠️ 除外されたページ")
-            st.markdown("このページは処理対象から除外されています。")
-            
+            if page.status == PageStatus.SUCCESS and page.content:
+                st.success("✅ 記事内容の取得に成功")
+                
+                # コンテンツプレビュー
+                with st.expander("📖 記事内容プレビュー", expanded=True):
+                    preview_text = page.content[:500] + "..." if len(page.content) > 500 else page.content
+                    st.text_area("", preview_text, height=200, disabled=True, label_visibility="collapsed")
+                
+                # 統計情報
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📝 文字数", f"{len(page.content):,}")
+                with col2:
+                    st.metric("🏷️ タグ数", len(page.tags) if page.tags else 0)
+                with col3:
+                    quality_score = page.metadata.get('quality_score', 0) if page.metadata else 0
+                    st.metric("⭐ 品質", f"{quality_score:.1f}" if isinstance(quality_score, (int, float)) else "N/A")
+                
+                # タグ情報
+                if page.tags:
+                    st.markdown(f"**🏷️ タグ:** {', '.join(page.tags)}")
+                
+                # メタデータ
+                if page.metadata:
+                    with st.expander("📊 詳細メタデータ"):
+                        st.json(page.metadata)
+                        
+            elif page.status == PageStatus.ERROR:
+                st.error("❌ 記事内容の取得に失敗")
+                st.markdown("このページは基本情報のみで保存されます。")
+                
+            elif page.status == PageStatus.EXCLUDED:
+                st.warning("⚠️ 除外されたページ")
+                st.markdown("このページは処理対象から除外されています。")
+                
+            else:
+                st.info("ℹ️ まだ処理されていません")
+                st.markdown("「ページ内容を取得」を実行してください。")
+        
         else:
-            st.info("ℹ️ まだ処理されていません")
-            st.markdown("「ページ内容を取得」を実行してください。")
-    
-    else:
-        st.warning("⚠️ プレビューデータがありません")
-        st.markdown("先にブックマーク解析とページ内容取得を実行してください。")
+            st.info("ℹ️ 基本情報のみ表示")
+            st.markdown("「ページ内容を取得」を実行すると、記事の詳細情報が表示されます。")
+            
+            # URL分析
+            with st.expander("🔍 URL分析"):
+                st.markdown(f"**プロトコル:** {parsed_url.scheme}")
+                st.markdown(f"**ドメイン:** {parsed_url.netloc}")
+                st.markdown(f"**パス:** {parsed_url.path}")
+                if parsed_url.query:
+                    st.markdown(f"**クエリ:** {parsed_url.query}")
+                if parsed_url.fragment:
+                    st.markdown(f"**フラグメント:** {parsed_url.fragment}")
 
 
 def save_selected_pages_enhanced(selected_bookmarks: List[Bookmark], output_directory: Path):
@@ -3743,11 +3906,30 @@ def main():
                         # ステップ1: ブックマーク解析
                         status_text.text("📊 ブックマークファイルを解析中...")
                         progress_bar.progress(0.1)
+                        
+                        import time
+                        start_time = time.time()
                         add_log("📊 ブックマーク解析を開始...")
                         
                         parser = BookmarkParser()
+                        add_log("🔍 HTMLパーサーを初期化...")
+                        
+                        # ブックマーク解析の詳細ログ
+                        add_log("📄 HTMLコンテンツを解析中...")
+                        add_log("🔍 HTMLパーサーでDOMツリーを構築中...")
+                        add_log("📂 フォルダ構造を解析中...")
+                        add_log("🔗 ブックマークリンクを抽出中...")
+                        
                         bookmarks = parser.parse_bookmarks(content)
-                        add_log(f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出")
+                        
+                        parse_time = time.time() - start_time
+                        add_log(f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)")
+                        
+                        # ブックマーク統計の詳細ログ
+                        if bookmarks:
+                            domains = set(urlparse(b.url).netloc for b in bookmarks)
+                            folders = set('/'.join(b.folder_path) for b in bookmarks if b.folder_path)
+                            add_log(f"📊 統計: {len(domains)}個のドメイン, {len(folders)}個のフォルダ")
                         
                         # セッション状態に保存
                         st.session_state['bookmarks'] = bookmarks
@@ -3757,35 +3939,77 @@ def main():
                         status_text.text("📂 既存ファイルをスキャン中...")
                         progress_bar.progress(0.3)
                         
+                        scan_start = time.time()
                         output_directory = st.session_state['output_directory']
                         add_log(f"📂 ディレクトリスキャン開始: {output_directory}")
+                        
                         directory_manager = LocalDirectoryManager(output_directory)
+                        add_log("🔍 ディレクトリ構造を解析中...")
+                        add_log("📁 サブディレクトリを再帰的にスキャン中...")
+                        add_log("📄 Markdownファイルを検索中...")
                         
                         # 既存ディレクトリ構造をスキャン
                         existing_structure = directory_manager.scan_directory()
                         total_existing_files = sum(len(files) for files in existing_structure.values())
-                        add_log(f"📁 既存ファイル検出: {total_existing_files}個のMarkdownファイル")
+                        
+                        scan_time = time.time() - scan_start
+                        add_log(f"📁 既存ファイル検出: {total_existing_files}個のMarkdownファイル ({scan_time:.2f}秒)")
+                        
+                        if existing_structure:
+                            add_log(f"📊 ディレクトリ数: {len(existing_structure)}個")
                         
                         # ステップ3: 重複チェック
                         status_text.text("🔄 重複ファイルをチェック中...")
                         progress_bar.progress(0.6)
+                        
+                        dup_start = time.time()
                         add_log("🔄 重複チェック開始...")
+                        add_log(f"🔍 {len(bookmarks)}個のブックマークをチェック中...")
+                        
+                        # 重複チェックの詳細進捗
+                        batch_size = max(1, len(bookmarks) // 10)  # 10%ずつ進捗表示
+                        for i in range(0, len(bookmarks), batch_size):
+                            batch_end = min(i + batch_size, len(bookmarks))
+                            progress_percent = (batch_end / len(bookmarks)) * 100
+                            add_log(f"📊 重複チェック進捗: {batch_end}/{len(bookmarks)} ({progress_percent:.0f}%)")
+                            time.sleep(0.1)  # 進捗表示のための短い待機
                         
                         duplicates = directory_manager.compare_with_bookmarks(bookmarks)
-                        add_log(f"🔄 重複チェック完了: {len(duplicates['files'])}個の重複ファイルを検出")
+                        
+                        dup_time = time.time() - dup_start
+                        add_log(f"🔄 重複チェック完了: {len(duplicates['files'])}個の重複ファイルを検出 ({dup_time:.2f}秒)")
                         
                         # ステップ4: 特殊ケース分析
                         status_text.text("🔍 特殊ケースを分析中...")
                         progress_bar.progress(0.8)
+                        
+                        edge_start = time.time()
                         add_log("🔍 特殊ケース分析開始...")
+                        add_log("🔍 URL形式とタイトルを検証中...")
+                        
+                        # 特殊ケース分析の詳細進捗
+                        batch_size = max(1, len(bookmarks) // 5)  # 20%ずつ進捗表示
+                        for i in range(0, len(bookmarks), batch_size):
+                            batch_end = min(i + batch_size, len(bookmarks))
+                            progress_percent = (batch_end / len(bookmarks)) * 100
+                            add_log(f"🔍 特殊ケース分析進捗: {batch_end}/{len(bookmarks)} ({progress_percent:.0f}%)")
+                            time.sleep(0.05)  # 進捗表示のための短い待機
                         
                         edge_case_result = handle_edge_cases_and_errors(bookmarks)
-                        add_log(f"🔍 特殊ケース分析完了: {edge_case_result['statistics']['edge_cases_count']}個の特殊ケースを検出")
+                        
+                        edge_time = time.time() - edge_start
+                        add_log(f"🔍 特殊ケース分析完了: {edge_case_result['statistics']['edge_cases_count']}個の特殊ケースを検出 ({edge_time:.2f}秒)")
                         
                         # ステップ5: 完了
                         status_text.text("✅ 解析完了")
                         progress_bar.progress(1.0)
-                        add_log("✅ すべての解析が完了しました")
+                        
+                        total_time = time.time() - start_time
+                        add_log(f"✅ すべての解析が完了しました (総時間: {total_time:.2f}秒)")
+                        
+                        # 最終統計
+                        total_to_process = len(bookmarks) - len(duplicates['files'])
+                        add_log(f"📊 最終結果: {total_to_process}個が処理対象, {len(duplicates['files'])}個が重複除外")
                         
                         # セッション状態に保存
                         st.session_state['directory_manager'] = directory_manager
@@ -3852,40 +4076,10 @@ def main():
                         st.subheader("📂 ブックマーク構造")
                         directory_structure = parser.extract_directory_structure(bookmarks)
                         
-                        # 処理対象と除外対象を分けて表示
-                        total_to_process = 0
-                        total_excluded = 0
-                        
-                        for folder_path, filenames in directory_structure.items():
-                            # このフォルダ内の重複ファイル数を計算
-                            if folder_path:
-                                folder_duplicates = [f for f in duplicates['files'] 
-                                                   if f.startswith(folder_path + '/')]
-                            else:
-                                folder_duplicates = [f for f in duplicates['files'] 
-                                                   if '/' not in f]
-                            
-                            excluded_count = len([f for f in filenames 
-                                                if directory_manager.check_file_exists(folder_path, f)])
-                            process_count = len(filenames) - excluded_count
-                            
-                            total_to_process += process_count
-                            total_excluded += excluded_count
-                            
-                            if folder_path:
-                                status_text = f"📁 {folder_path}"
-                                if excluded_count > 0:
-                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
-                                else:
-                                    status_text += f" ({process_count}個処理予定)"
-                                st.write(f"**{status_text}**")
-                            else:
-                                status_text = f"📄 ルートディレクトリ"
-                                if excluded_count > 0:
-                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
-                                else:
-                                    status_text += f" ({process_count}個処理予定)"
-                                st.write(f"**{status_text}**")
+                        # ツリー構造で表示
+                        total_to_process, total_excluded = display_bookmark_structure_tree(
+                            directory_structure, duplicates, directory_manager
+                        )
                         
                         # 処理予定の統計を表示
                         st.markdown("---")
@@ -3903,7 +4097,20 @@ def main():
                         # Task 9: ページ一覧表示とプレビュー機能
                         if total_to_process > 0:
                             st.markdown("---")
-                            display_page_list_and_preview(bookmarks, duplicates, st.session_state['output_directory'])
+                            
+                            # 2カラムレイアウトでページ一覧とプレビューを表示
+                            col1, col2 = st.columns([2, 1])
+                            
+                            with col1:
+                                st.header("📋 ページ一覧")
+                                display_page_list_and_preview(bookmarks, duplicates, st.session_state['output_directory'])
+                            
+                            with col2:
+                                st.header("👁️ プレビュー")
+                                if 'preview_bookmark' in st.session_state and 'preview_index' in st.session_state:
+                                    show_page_preview(st.session_state['preview_bookmark'], st.session_state['preview_index'])
+                                else:
+                                    st.info("📄 ページを選択してプレビューを表示")
                         
                         # デバッグ情報の表示
                         if len(duplicates['files']) == 0 and len(existing_structure) > 0:
