@@ -2870,6 +2870,122 @@ def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[
     return dict(sorted(folder_groups.items()))
 
 
+def display_bookmark_structure_tree(directory_structure: Dict[str, List[str]], duplicates: Dict, directory_manager) -> tuple[int, int]:
+    """
+    ブックマーク構造をツリー形式で表示
+    
+    Args:
+        directory_structure: ディレクトリ構造辞書
+        duplicates: 重複ファイル情報
+        directory_manager: ディレクトリマネージャー
+        
+    Returns:
+        tuple[int, int]: (処理予定数, 除外数)
+    """
+    # フォルダ構造を階層的に整理
+    folder_tree = {}
+    folder_stats = {}  # フォルダごとの統計情報
+    total_to_process = 0
+    total_excluded = 0
+    
+    # 各フォルダパスを解析してツリー構造を構築
+    for folder_path, filenames in directory_structure.items():
+        # 重複ファイル数を計算
+        excluded_count = len([f for f in filenames 
+                            if directory_manager.check_file_exists(folder_path, f)])
+        process_count = len(filenames) - excluded_count
+        
+        total_to_process += process_count
+        total_excluded += excluded_count
+        
+        # 統計情報を保存
+        folder_stats[folder_path] = {
+            'process_count': process_count,
+            'excluded_count': excluded_count
+        }
+        
+        # フォルダパスを分割
+        if folder_path:
+            path_parts = folder_path.split('/')
+        else:
+            path_parts = ['ROOT']  # ルートディレクトリ
+        
+        # ツリー構造に追加
+        current_level = folder_tree
+        for i, part in enumerate(path_parts):
+            if part not in current_level:
+                current_level[part] = {}
+            current_level = current_level[part]
+    
+    # ツリー構造を表示
+    _display_tree_recursive(folder_tree, folder_stats, directory_structure, "", True, "")
+    
+    return total_to_process, total_excluded
+
+
+def _display_tree_recursive(tree_dict: Dict, folder_stats: Dict, directory_structure: Dict, prefix: str, is_root: bool, current_path: str = ""):
+    """
+    ツリー構造を再帰的に表示
+    
+    Args:
+        tree_dict: ツリー辞書
+        folder_stats: フォルダ統計情報
+        directory_structure: 元のディレクトリ構造
+        prefix: 現在の行のプレフィックス
+        is_root: ルートレベルかどうか
+        current_path: 現在のパス
+    """
+    items = list(tree_dict.items())
+    
+    for i, (name, children) in enumerate(items):
+        is_last_item = (i == len(items) - 1)
+        
+        # 現在のフォルダパスを構築
+        if name == 'ROOT':
+            folder_path = ""
+            display_name = "📄 ルートディレクトリ"
+        else:
+            if current_path:
+                folder_path = f"{current_path}/{name}"
+            else:
+                folder_path = name
+            display_name = f"📁 {name}"
+        
+        # ツリー記号を決定
+        if is_root and name == 'ROOT':
+            tree_symbol = ""
+            next_prefix = ""
+        elif is_last_item:
+            tree_symbol = "└── "
+            next_prefix = prefix + "    "
+        else:
+            tree_symbol = "├── "
+            next_prefix = prefix + "│   "
+        
+        # 統計情報を追加
+        if folder_path in folder_stats:
+            stats = folder_stats[folder_path]
+            files_count = stats['process_count']
+            excluded_count = stats['excluded_count']
+            
+            if excluded_count > 0:
+                stats_text = f" ({files_count}個処理予定, {excluded_count}個除外)"
+            else:
+                stats_text = f" ({files_count}個処理予定)"
+            
+            display_name += stats_text
+        
+        # 表示
+        if is_root and name == 'ROOT':
+            st.write(f"`{display_name}`")
+        else:
+            st.write(f"`{prefix}{tree_symbol}{display_name}`")
+        
+        # 子要素がある場合は再帰的に表示
+        if children:
+            _display_tree_recursive(children, folder_stats, directory_structure, next_prefix, False, folder_path)
+
+
 def show_page_preview(bookmark: Bookmark, index: int):
     """
     ブックマーク情報のプレビュー表示機能
@@ -3960,40 +4076,10 @@ def main():
                         st.subheader("📂 ブックマーク構造")
                         directory_structure = parser.extract_directory_structure(bookmarks)
                         
-                        # 処理対象と除外対象を分けて表示
-                        total_to_process = 0
-                        total_excluded = 0
-                        
-                        for folder_path, filenames in directory_structure.items():
-                            # このフォルダ内の重複ファイル数を計算
-                            if folder_path:
-                                folder_duplicates = [f for f in duplicates['files'] 
-                                                   if f.startswith(folder_path + '/')]
-                            else:
-                                folder_duplicates = [f for f in duplicates['files'] 
-                                                   if '/' not in f]
-                            
-                            excluded_count = len([f for f in filenames 
-                                                if directory_manager.check_file_exists(folder_path, f)])
-                            process_count = len(filenames) - excluded_count
-                            
-                            total_to_process += process_count
-                            total_excluded += excluded_count
-                            
-                            if folder_path:
-                                status_text = f"📁 {folder_path}"
-                                if excluded_count > 0:
-                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
-                                else:
-                                    status_text += f" ({process_count}個処理予定)"
-                                st.write(f"**{status_text}**")
-                            else:
-                                status_text = f"📄 ルートディレクトリ"
-                                if excluded_count > 0:
-                                    status_text += f" ({process_count}個処理予定, {excluded_count}個除外)"
-                                else:
-                                    status_text += f" ({process_count}個処理予定)"
-                                st.write(f"**{status_text}**")
+                        # ツリー構造で表示
+                        total_to_process, total_excluded = display_bookmark_structure_tree(
+                            directory_structure, duplicates, directory_manager
+                        )
                         
                         # 処理予定の統計を表示
                         st.markdown("---")
