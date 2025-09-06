@@ -19,19 +19,100 @@ from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 from bs4 import BeautifulSoup
 
-# ログ設定
+# Task 10: 強化されたログ設定とエラーログ記録機能
 # 環境変数DEBUG=1を設定するとデバッグログも表示
 log_level = logging.DEBUG if os.getenv('DEBUG') == '1' else logging.INFO
+
+# ログファイルの設定
+log_directory = Path("logs")
+log_directory.mkdir(exist_ok=True)
+
+# ログファイル名（日付付き）
+log_filename = log_directory / f"bookmark2obsidian_{datetime.datetime.now().strftime('%Y%m%d')}.log"
+
+# ログハンドラーの設定
+handlers = [
+    logging.StreamHandler(),  # コンソール出力
+    logging.FileHandler(log_filename, encoding='utf-8')  # ファイル出力
+]
+
 logging.basicConfig(
     level=log_level,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # コンソール出力
-    ]
+    format='%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+    handlers=handlers
 )
 logger = logging.getLogger(__name__)
 
 logger.info(f"🚀 アプリケーション開始 (ログレベル: {logging.getLevelName(log_level)})")
+logger.info(f"📝 ログファイル: {log_filename}")
+
+
+class ErrorLogger:
+    """Task 10: エラーログ記録と管理クラス"""
+    
+    def __init__(self):
+        self.errors = []
+        self.error_counts = {
+            'network': 0,
+            'timeout': 0,
+            'fetch': 0,
+            'extraction': 0,
+            'markdown': 0,
+            'permission': 0,
+            'filesystem': 0,
+            'save': 0,
+            'unexpected': 0
+        }
+    
+    def log_error(self, bookmark: 'Bookmark', error_msg: str, error_type: str, retryable: bool = False):
+        """
+        エラーを記録
+        
+        Args:
+            bookmark: エラーが発生したブックマーク
+            error_msg: エラーメッセージ
+            error_type: エラータイプ
+            retryable: リトライ可能かどうか
+        """
+        error_entry = {
+            'timestamp': datetime.datetime.now(),
+            'bookmark': bookmark,
+            'error': error_msg,
+            'type': error_type,
+            'retryable': retryable,
+            'url': bookmark.url,
+            'title': bookmark.title
+        }
+        
+        self.errors.append(error_entry)
+        
+        if error_type in self.error_counts:
+            self.error_counts[error_type] += 1
+        
+        # ログファイルにも記録
+        logger.error(f"[{error_type.upper()}] {bookmark.title} - {error_msg}")
+    
+    def get_error_summary(self) -> Dict[str, Any]:
+        """エラーサマリーを取得"""
+        return {
+            'total_errors': len(self.errors),
+            'error_counts': self.error_counts.copy(),
+            'retryable_count': sum(1 for error in self.errors if error['retryable']),
+            'recent_errors': self.errors[-10:] if self.errors else []
+        }
+    
+    def get_retryable_errors(self) -> List[Dict]:
+        """リトライ可能なエラーを取得"""
+        return [error for error in self.errors if error['retryable']]
+    
+    def clear_errors(self):
+        """エラーログをクリア"""
+        self.errors.clear()
+        self.error_counts = {key: 0 for key in self.error_counts}
+
+
+# グローバルエラーログインスタンス
+error_logger = ErrorLogger()
 
 
 # データモデル定義
@@ -716,13 +797,19 @@ class WebScraper:
     
     def fetch_page_content(self, url: str) -> Optional[str]:
         """
-        指定されたURLからWebページのHTMLソースコードを取得
+        Task 10: エラーハンドリングを強化したページ取得機能
         
         Args:
             url: 取得対象のURL
             
         Returns:
             Optional[str]: 取得されたHTMLコンテンツ（失敗時はNone）
+            
+        Raises:
+            requests.exceptions.ConnectionError: ネットワーク接続エラー
+            requests.exceptions.Timeout: タイムアウトエラー
+            requests.exceptions.HTTPError: HTTPエラー
+            requests.exceptions.SSLError: SSL証明書エラー
         """
         try:
             # URLの解析
@@ -739,16 +826,45 @@ class WebScraper:
             # レート制限の適用
             self.apply_rate_limiting(domain)
             
-            # HTTPリクエストの実行
-            response = self.session.get(
-                url,
-                timeout=self.timeout,
-                allow_redirects=True,
-                verify=True  # SSL証明書検証を有効化
-            )
-            
-            # ステータスコードの確認
-            response.raise_for_status()
+            # HTTPリクエストの実行（エラーハンドリング強化）
+            try:
+                response = self.session.get(
+                    url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    verify=True  # SSL証明書検証を有効化
+                )
+                
+                # ステータスコードの確認
+                response.raise_for_status()
+                
+            except requests.exceptions.Timeout as e:
+                logger.warning(f"⏰ タイムアウト: {url} (timeout={self.timeout}s)")
+                raise requests.exceptions.Timeout(f"ページ取得がタイムアウトしました: {url}")
+                
+            except requests.exceptions.SSLError as e:
+                logger.warning(f"🔒 SSL証明書エラー: {url}")
+                raise requests.exceptions.SSLError(f"SSL証明書の検証に失敗しました: {url}")
+                
+            except requests.exceptions.ConnectionError as e:
+                logger.warning(f"🔌 接続エラー: {url}")
+                raise requests.exceptions.ConnectionError(f"ネットワーク接続に失敗しました: {url}")
+                
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response else "不明"
+                logger.warning(f"🚫 HTTPエラー: {url} - ステータスコード: {status_code}")
+                
+                # 特定のHTTPエラーに対する詳細メッセージ
+                if status_code == 403:
+                    raise requests.exceptions.HTTPError(f"アクセスが拒否されました (403): {url}")
+                elif status_code == 404:
+                    raise requests.exceptions.HTTPError(f"ページが見つかりません (404): {url}")
+                elif status_code == 429:
+                    raise requests.exceptions.HTTPError(f"リクエスト制限に達しました (429): {url}")
+                elif status_code >= 500:
+                    raise requests.exceptions.HTTPError(f"サーバーエラー ({status_code}): {url}")
+                else:
+                    raise requests.exceptions.HTTPError(f"HTTPエラー ({status_code}): {url}")
             
             # 文字エンコーディングの自動検出
             if response.encoding is None:
@@ -757,28 +873,28 @@ class WebScraper:
             # HTMLコンテンツを取得
             html_content = response.text
             
-            logger.debug(f"✅ ページ取得成功: {url} (サイズ: {len(html_content)} 文字)")
+            # コンテンツサイズの検証
+            if len(html_content) < 100:
+                logger.warning(f"⚠️ コンテンツサイズが小さすぎます: {url} (サイズ: {len(html_content)} 文字)")
+                return None
+            
+            logger.debug(f"✅ ページ取得成功: {url} (サイズ: {len(html_content):,} 文字)")
             
             # 最終アクセス時刻を更新
             self.domain_last_access[domain] = time.time()
             
             return html_content
             
-        except requests.exceptions.Timeout:
-            logger.warning(f"⏰ タイムアウト: {url}")
-            return None
-        except requests.exceptions.ConnectionError:
-            logger.warning(f"🔌 接続エラー: {url}")
-            return None
-        except requests.exceptions.HTTPError as e:
-            logger.warning(f"🚫 HTTPエラー: {url} - {e}")
-            return None
-        except requests.exceptions.SSLError:
-            logger.warning(f"🔒 SSL証明書エラー: {url}")
-            return None
+        except (requests.exceptions.Timeout, 
+                requests.exceptions.ConnectionError, 
+                requests.exceptions.HTTPError, 
+                requests.exceptions.SSLError):
+            # 既知のネットワークエラーは再発生させる
+            raise
+            
         except Exception as e:
-            logger.error(f"❌ ページ取得エラー: {url} - {str(e)}")
-            return None
+            logger.error(f"❌ 予期しないページ取得エラー: {url} - {str(e)}")
+            raise Exception(f"予期しないエラーが発生しました: {str(e)}")
     
     def extract_article_content(self, html: str, url: str = "") -> Optional[Dict]:
         """
@@ -2080,7 +2196,7 @@ def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[
 
 def show_page_preview(bookmark: Bookmark, index: int):
     """
-    ページプレビューを表示
+    Task 10: 進捗表示とエラーハンドリングを強化したプレビュー機能
     
     Args:
         bookmark: ブックマーク情報
@@ -2088,41 +2204,119 @@ def show_page_preview(bookmark: Bookmark, index: int):
     """
     # プレビューデータがキャッシュされているかチェック
     if index not in st.session_state.preview_cache:
-        with st.spinner(f"🔍 {bookmark.title} の内容を取得中..."):
+        
+        # 進捗表示コンテナ
+        progress_container = st.container()
+        
+        with progress_container:
+            st.info(f"🔍 プレビュー取得中: {bookmark.title}")
+            
+            # 詳細進捗表示
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
             try:
-                # WebScraperを使用してページ内容を取得
-                scraper = WebScraper()
-                html_content = scraper.fetch_page_content(bookmark.url)
+                # ステップ1: ページ取得
+                status_text.text("🌐 ページ内容を取得中...")
+                progress_bar.progress(0.2)
                 
-                if html_content:
-                    # 記事内容を抽出
-                    article_data = scraper.extract_article_content(html_content, bookmark.url)
-                    
-                    if article_data:
-                        # MarkdownGeneratorでプレビュー用Markdownを生成
-                        generator = MarkdownGenerator()
-                        markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
-                        
-                        st.session_state.preview_cache[index] = {
-                            'success': True,
-                            'article_data': article_data,
-                            'markdown': markdown_content
-                        }
-                    else:
-                        st.session_state.preview_cache[index] = {
-                            'success': False,
-                            'error': '記事内容の抽出に失敗しました'
-                        }
-                else:
+                scraper = WebScraper()
+                html_content = None
+                
+                try:
+                    html_content = scraper.fetch_page_content(bookmark.url)
+                except requests.exceptions.ConnectionError:
                     st.session_state.preview_cache[index] = {
                         'success': False,
-                        'error': 'ページの取得に失敗しました'
+                        'error': 'ネットワーク接続エラー',
+                        'error_type': 'network',
+                        'retryable': True
                     }
+                    error_logger.log_error(bookmark, 'ネットワーク接続エラー', 'network', True)
+                    return
+                except requests.exceptions.Timeout:
+                    st.session_state.preview_cache[index] = {
+                        'success': False,
+                        'error': 'タイムアウトエラー',
+                        'error_type': 'timeout',
+                        'retryable': True
+                    }
+                    error_logger.log_error(bookmark, 'タイムアウトエラー', 'timeout', True)
+                    return
+                except Exception as e:
+                    st.session_state.preview_cache[index] = {
+                        'success': False,
+                        'error': f'ページ取得エラー: {str(e)}',
+                        'error_type': 'fetch',
+                        'retryable': False
+                    }
+                    error_logger.log_error(bookmark, f'ページ取得エラー: {str(e)}', 'fetch', False)
+                    return
+                
+                # ステップ2: コンテンツ抽出
+                status_text.text("📄 記事内容を抽出中...")
+                progress_bar.progress(0.6)
+                
+                article_data = None
+                if html_content:
+                    try:
+                        article_data = scraper.extract_article_content(html_content, bookmark.url)
+                    except Exception as e:
+                        logger.warning(f"⚠️ コンテンツ抽出エラー: {str(e)} - フォールバックを使用")
+                        error_logger.log_error(bookmark, f'コンテンツ抽出エラー: {str(e)}', 'extraction', False)
+                
+                # ステップ3: Markdown生成
+                status_text.text("📝 Markdownを生成中...")
+                progress_bar.progress(0.8)
+                
+                try:
+                    generator = MarkdownGenerator()
+                    if article_data:
+                        markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
+                    else:
+                        markdown_content = generator._generate_fallback_markdown(bookmark)
+                        article_data = {
+                            'title': bookmark.title,
+                            'content': 'コンテンツの抽出に失敗しました',
+                            'quality_score': 0.0,
+                            'extraction_method': 'fallback',
+                            'tags': []
+                        }
+                except Exception as e:
+                    st.session_state.preview_cache[index] = {
+                        'success': False,
+                        'error': f'Markdown生成エラー: {str(e)}',
+                        'error_type': 'markdown',
+                        'retryable': False
+                    }
+                    error_logger.log_error(bookmark, f'Markdown生成エラー: {str(e)}', 'markdown', False)
+                    return
+                
+                # ステップ4: 完了
+                status_text.text("✅ プレビュー準備完了")
+                progress_bar.progress(1.0)
+                
+                # キャッシュに保存
+                st.session_state.preview_cache[index] = {
+                    'success': True,
+                    'article_data': article_data,
+                    'markdown': markdown_content,
+                    'fetch_time': datetime.datetime.now()
+                }
+                
+                # 進捗表示をクリア
+                progress_container.empty()
+                
             except Exception as e:
                 st.session_state.preview_cache[index] = {
                     'success': False,
-                    'error': f'エラーが発生しました: {str(e)}'
+                    'error': f'予期しないエラー: {str(e)}',
+                    'error_type': 'unexpected',
+                    'retryable': False
                 }
+                error_logger.log_error(bookmark, f'予期しないエラー: {str(e)}', 'unexpected', False)
+                progress_container.empty()
+                return
     
     # プレビューデータを表示
     preview_data = st.session_state.preview_cache[index]
@@ -2133,15 +2327,28 @@ def show_page_preview(bookmark: Bookmark, index: int):
         # プレビュー情報を表示
         st.subheader(f"📄 {bookmark.title} - プレビュー")
         
+        # キャッシュ情報
+        if 'fetch_time' in preview_data:
+            fetch_time = preview_data['fetch_time']
+            st.caption(f"🕒 取得時刻: {fetch_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
         # 基本情報
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown(f"**URL:** {bookmark.url}")
-            st.markdown(f"**品質スコア:** {article_data.get('quality_score', 'N/A')}")
+            quality_score = article_data.get('quality_score', 'N/A')
+            if isinstance(quality_score, (int, float)):
+                quality_color = "🟢" if quality_score > 0.7 else "🟡" if quality_score > 0.4 else "🔴"
+                st.markdown(f"**品質スコア:** {quality_color} {quality_score}")
+            else:
+                st.markdown(f"**品質スコア:** {quality_score}")
         
         with col2:
-            st.markdown(f"**抽出方法:** {article_data.get('extraction_method', 'N/A')}")
+            extraction_method = article_data.get('extraction_method', 'N/A')
+            method_icon = "✅" if extraction_method != 'fallback' else "⚠️"
+            st.markdown(f"**抽出方法:** {method_icon} {extraction_method}")
+            
             content_length = len(article_data.get('content', ''))
             st.markdown(f"**文字数:** {content_length:,}文字")
         
@@ -2159,15 +2366,59 @@ def show_page_preview(bookmark: Bookmark, index: int):
         # 生成されるMarkdownのプレビュー
         with st.expander("📝 生成されるMarkdownファイル"):
             st.code(preview_data['markdown'], language='markdown')
+        
+        # プレビューアクション
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 プレビューを更新", key=f"refresh_preview_{index}"):
+                # キャッシュをクリアして再取得
+                if index in st.session_state.preview_cache:
+                    del st.session_state.preview_cache[index]
+                st.rerun()
+        
+        with col2:
+            if st.button("📋 URLをコピー", key=f"copy_url_{index}"):
+                st.code(bookmark.url)
+                st.success("URLを表示しました")
     
     else:
-        st.error(f"❌ プレビューエラー: {preview_data['error']}")
-        st.info("💡 このページは手動で確認が必要です")
+        error_type = preview_data.get('error_type', 'unknown')
+        retryable = preview_data.get('retryable', False)
+        
+        # エラータイプに応じたアイコンとメッセージ
+        error_icons = {
+            'network': '🔌',
+            'timeout': '⏰',
+            'fetch': '🌐',
+            'extraction': '📄',
+            'markdown': '📝',
+            'unexpected': '💥'
+        }
+        
+        error_icon = error_icons.get(error_type, '❌')
+        st.error(f"{error_icon} プレビューエラー: {preview_data['error']}")
+        
+        if retryable:
+            st.info("🔄 このエラーはリトライ可能です")
+            if st.button("🔄 リトライ", key=f"retry_preview_{index}"):
+                # キャッシュをクリアして再取得
+                if index in st.session_state.preview_cache:
+                    del st.session_state.preview_cache[index]
+                st.rerun()
+        else:
+            st.info("💡 このページは手動で確認が必要です")
+        
+        # エラー詳細情報
+        with st.expander("🔍 エラー詳細"):
+            st.write(f"**エラータイプ:** {error_type}")
+            st.write(f"**リトライ可能:** {'はい' if retryable else 'いいえ'}")
+            st.write(f"**URL:** {bookmark.url}")
+            st.write(f"**タイトル:** {bookmark.title}")
 
 
 def save_selected_pages(selected_bookmarks: List[Bookmark], output_directory: Path):
     """
-    選択されたページをMarkdownファイルとして保存
+    Task 10: 進捗表示とエラーハンドリング機能を強化した保存機能
     
     Args:
         selected_bookmarks: 選択されたブックマーク一覧
@@ -2177,67 +2428,293 @@ def save_selected_pages(selected_bookmarks: List[Bookmark], output_directory: Pa
         st.warning("保存するページが選択されていません")
         return
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # 進捗表示とエラーハンドリングの初期化
+    progress_container = st.container()
+    error_container = st.container()
+    
+    with progress_container:
+        st.subheader("📊 処理進捗")
+        
+        # 複数の進捗バー
+        overall_progress = st.progress(0)
+        current_progress = st.progress(0)
+        
+        # ステータス表示
+        status_text = st.empty()
+        current_task = st.empty()
+        
+        # 統計情報
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            success_metric = st.metric("✅ 成功", 0)
+        with col2:
+            error_metric = st.metric("❌ エラー", 0)
+        with col3:
+            skip_metric = st.metric("⏭️ スキップ", 0)
+        with col4:
+            remaining_metric = st.metric("⏳ 残り", len(selected_bookmarks))
+    
+    # エラーログとリトライ機能
+    error_log = []
+    retry_queue = []
     
     scraper = WebScraper()
     generator = MarkdownGenerator()
     
     saved_count = 0
     error_count = 0
+    skip_count = 0
     
+    # メイン処理ループ
     for i, bookmark in enumerate(selected_bookmarks):
-        progress = (i + 1) / len(selected_bookmarks)
-        progress_bar.progress(progress)
-        status_text.text(f"処理中: {bookmark.title} ({i+1}/{len(selected_bookmarks)})")
+        overall_progress_value = (i + 1) / len(selected_bookmarks)
+        overall_progress.progress(overall_progress_value)
+        
+        status_text.text(f"📋 処理中: {i+1}/{len(selected_bookmarks)} ページ")
+        current_task.text(f"🔍 現在の処理: {bookmark.title}")
         
         try:
-            # ページ内容を取得
-            html_content = scraper.fetch_page_content(bookmark.url)
+            # ステップ1: ページ内容取得
+            current_progress.progress(0.2)
+            current_task.text(f"🌐 ページ取得中: {bookmark.title}")
+            
+            html_content = None
+            article_data = None
+            
+            # ネットワークエラーハンドリング
+            try:
+                html_content = scraper.fetch_page_content(bookmark.url)
+            except requests.exceptions.ConnectionError:
+                error_msg = f"ネットワーク接続エラー: {bookmark.url}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'network',
+                    'retryable': True
+                })
+                logger.error(f"🔌 {error_msg}")
+                skip_count += 1
+                continue
+            except requests.exceptions.Timeout:
+                error_msg = f"タイムアウトエラー: {bookmark.url}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'timeout',
+                    'retryable': True
+                })
+                logger.error(f"⏰ {error_msg}")
+                skip_count += 1
+                continue
+            except Exception as e:
+                error_msg = f"ページ取得エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'fetch',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
+            
+            # ステップ2: コンテンツ抽出
+            current_progress.progress(0.5)
+            current_task.text(f"📄 コンテンツ抽出中: {bookmark.title}")
             
             if html_content:
-                # 記事内容を抽出
-                article_data = scraper.extract_article_content(html_content, bookmark.url)
-                
+                try:
+                    article_data = scraper.extract_article_content(html_content, bookmark.url)
+                except Exception as e:
+                    error_msg = f"コンテンツ抽出エラー: {str(e)}"
+                    error_log.append({
+                        'bookmark': bookmark,
+                        'error': error_msg,
+                        'type': 'extraction',
+                        'retryable': False
+                    })
+                    logger.warning(f"⚠️ {error_msg} - フォールバックを使用")
+            
+            # ステップ3: Markdown生成
+            current_progress.progress(0.7)
+            current_task.text(f"📝 Markdown生成中: {bookmark.title}")
+            
+            try:
                 if article_data:
-                    # Markdownを生成
                     markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
                 else:
                     # フォールバック用Markdown
                     markdown_content = generator._generate_fallback_markdown(bookmark)
-            else:
-                # フォールバック用Markdown
-                markdown_content = generator._generate_fallback_markdown(bookmark)
+            except Exception as e:
+                error_msg = f"Markdown生成エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'markdown',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
             
-            # ファイルパスを生成
-            file_path = generator.generate_file_path(bookmark, output_directory)
+            # ステップ4: ファイル保存
+            current_progress.progress(0.9)
+            current_task.text(f"💾 ファイル保存中: {bookmark.title}")
             
-            # ディレクトリを作成
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                # ファイルパスを生成
+                file_path = generator.generate_file_path(bookmark, output_directory)
+                
+                # ディレクトリを作成
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # ファイルを保存
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(markdown_content)
+                
+                saved_count += 1
+                logger.info(f"✅ ファイル保存成功: {file_path}")
+                
+            except PermissionError:
+                error_msg = f"ファイル保存権限エラー: {file_path}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'permission',
+                    'retryable': False
+                })
+                logger.error(f"🔒 {error_msg}")
+                error_count += 1
+                continue
+            except OSError as e:
+                error_msg = f"ファイルシステムエラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'filesystem',
+                    'retryable': False
+                })
+                logger.error(f"💾 {error_msg}")
+                error_count += 1
+                continue
+            except Exception as e:
+                error_msg = f"ファイル保存エラー: {str(e)}"
+                error_log.append({
+                    'bookmark': bookmark,
+                    'error': error_msg,
+                    'type': 'save',
+                    'retryable': False
+                })
+                logger.error(f"❌ {error_msg}")
+                error_count += 1
+                continue
             
-            # ファイルを保存
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-            
-            saved_count += 1
-            logger.info(f"✅ ファイル保存成功: {file_path}")
+            # ステップ5: 完了
+            current_progress.progress(1.0)
             
         except Exception as e:
-            logger.error(f"❌ ファイル保存エラー: {bookmark.title} - {str(e)}")
+            # 予期しないエラー
+            error_msg = f"予期しないエラー: {str(e)}"
+            error_log.append({
+                'bookmark': bookmark,
+                'error': error_msg,
+                'type': 'unexpected',
+                'retryable': False
+            })
+            logger.error(f"💥 {error_msg}")
             error_count += 1
+        
+        # メトリクス更新
+        with col1:
+            success_metric.metric("✅ 成功", saved_count)
+        with col2:
+            error_metric.metric("❌ エラー", error_count)
+        with col3:
+            skip_metric.metric("⏭️ スキップ", skip_count)
+        with col4:
+            remaining_metric.metric("⏳ 残り", len(selected_bookmarks) - i - 1)
     
-    # 完了メッセージ
-    progress_bar.progress(1.0)
-    status_text.text("保存完了！")
+    # 完了処理
+    overall_progress.progress(1.0)
+    current_progress.progress(1.0)
+    status_text.text("🎉 処理完了！")
+    current_task.text("✅ すべての処理が完了しました")
+    
+    # 結果サマリー
+    st.markdown("---")
+    st.subheader("📊 処理結果サマリー")
+    
+    total_processed = saved_count + error_count + skip_count
     
     if saved_count > 0:
-        st.success(f"✅ {saved_count}個のファイルを保存しました")
+        st.success(f"✅ {saved_count}個のファイルを正常に保存しました")
     
     if error_count > 0:
-        st.warning(f"⚠️ {error_count}個のファイルで保存エラーが発生しました")
+        st.error(f"❌ {error_count}個のファイルでエラーが発生しました")
+    
+    if skip_count > 0:
+        st.warning(f"⏭️ {skip_count}個のファイルをスキップしました")
+    
+    # エラーログの表示
+    if error_log:
+        with error_container:
+            st.subheader("🚨 エラーログ")
+            
+            # エラータイプ別の集計
+            error_types = {}
+            retryable_errors = []
+            
+            for error in error_log:
+                error_type = error['type']
+                if error_type not in error_types:
+                    error_types[error_type] = 0
+                error_types[error_type] += 1
+                
+                if error['retryable']:
+                    retryable_errors.append(error)
+            
+            # エラータイプ別表示
+            st.markdown("**エラータイプ別集計:**")
+            for error_type, count in error_types.items():
+                error_type_names = {
+                    'network': '🔌 ネットワークエラー',
+                    'timeout': '⏰ タイムアウトエラー',
+                    'fetch': '🌐 ページ取得エラー',
+                    'extraction': '📄 コンテンツ抽出エラー',
+                    'markdown': '📝 Markdown生成エラー',
+                    'permission': '🔒 権限エラー',
+                    'filesystem': '💾 ファイルシステムエラー',
+                    'save': '💾 保存エラー',
+                    'unexpected': '💥 予期しないエラー'
+                }
+                st.write(f"- {error_type_names.get(error_type, error_type)}: {count}件")
+            
+            # 詳細エラーログ
+            with st.expander("📋 詳細エラーログ"):
+                for i, error in enumerate(error_log):
+                    st.write(f"**{i+1}. {error['bookmark'].title}**")
+                    st.write(f"   URL: {error['bookmark'].url}")
+                    st.write(f"   エラー: {error['error']}")
+                    st.write(f"   タイプ: {error['type']}")
+                    if error['retryable']:
+                        st.write("   🔄 リトライ可能")
+                    st.write("---")
+            
+            # リトライ機能
+            if retryable_errors:
+                st.subheader("🔄 リトライ機能")
+                st.info(f"{len(retryable_errors)}個のエラーはリトライ可能です")
+                
+                if st.button("🔄 エラーページをリトライ"):
+                    retry_bookmarks = [error['bookmark'] for error in retryable_errors]
+                    st.info("リトライを開始します...")
+                    save_selected_pages(retry_bookmarks, output_directory)
     
     # 保存先情報
     st.info(f"📁 保存先: {output_directory}")
+    
+    # 処理完了ログ
+    logger.info(f"🎉 処理完了: 成功={saved_count}, エラー={error_count}, スキップ={skip_count}")
 
 
 def main():
