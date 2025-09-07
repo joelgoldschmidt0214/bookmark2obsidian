@@ -17,6 +17,8 @@ from core.parser import BookmarkParser
 from core.file_manager import LocalDirectoryManager
 from core.cache_manager import CacheManager
 from utils.cache_utils import get_cache_statistics, clear_all_cache
+from utils.performance_utils import PerformanceOptimizer
+from utils.error_handler import error_logger, error_recovery
 from ui.components import (
     validate_bookmarks_file,
     validate_directory_path,
@@ -29,6 +31,7 @@ from ui.components import (
     display_bookmark_list_only,
     show_page_preview,
 )
+from ui.progress_display import ProgressDisplay
 
 # Task 10: 強化されたログ設定とエラーログ記録機能
 # 環境変数DEBUG=1を設定するとデバッグログも表示
@@ -59,6 +62,53 @@ logger = logging.getLogger(__name__)
 
 logger.info(f"🚀 アプリケーション開始 (ログレベル: {logging.getLevelName(log_level)})")
 logger.info(f"📝 ログファイル: {log_filename}")
+
+
+def display_performance_settings_ui():
+    """
+    パフォーマンス設定UIを表示
+    """
+    st.markdown("---")
+    st.subheader("⚡ パフォーマンス設定")
+
+    # バッチサイズ設定
+    batch_size = st.slider(
+        "バッチサイズ",
+        min_value=10,
+        max_value=500,
+        value=st.session_state.get("batch_size", 100),
+        step=10,
+        help="一度に処理するブックマークの数。大きくすると高速化しますが、メモリを多く使用します。",
+    )
+    st.session_state["batch_size"] = batch_size
+
+    # 並列処理設定
+    use_parallel = st.checkbox(
+        "並列処理を使用",
+        value=st.session_state.get("use_parallel_processing", True),
+        help="複数のCPUコアを使用して処理を高速化します。",
+    )
+    st.session_state["use_parallel_processing"] = use_parallel
+
+    # メモリ監視設定
+    enable_memory_monitoring = st.checkbox(
+        "メモリ使用量監視",
+        value=st.session_state.get("enable_memory_monitoring", True),
+        help="処理中のメモリ使用量を監視し、統計を表示します。",
+    )
+    st.session_state["enable_memory_monitoring"] = enable_memory_monitoring
+
+    # パフォーマンス統計の表示
+    if "analysis_stats" in st.session_state:
+        stats = st.session_state["analysis_stats"]
+        if stats.get("performance_stats"):
+            perf_stats = stats["performance_stats"]
+            st.info(f"""
+            📊 前回の解析統計:
+            - 処理時間: {stats.get("parse_time", 0):.2f}秒
+            - メモリ使用量: {perf_stats.get("peak_memory_mb", 0):.1f}MB
+            - ブックマーク数: {stats.get("bookmark_count", 0)}個
+            """)
 
 
 def display_cache_management_ui():
@@ -471,6 +521,9 @@ def main():
         # キャッシュ管理UI
         display_cache_management_ui()
 
+        # パフォーマンス設定UI
+        display_performance_settings_ui()
+
         # Task 12: ユーザビリティ向上機能の追加
         display_user_friendly_messages()
         show_application_info()
@@ -524,78 +577,23 @@ def main():
                         start_time = time.time()
                         add_log("📊 ブックマーク解析を開始...")
 
-                        # キャッシュ機能の統合
+                        # 最適化されたブックマーク解析の実行
                         cache_manager = CacheManager()
                         force_reanalysis = st.session_state.get(
                             "force_reanalysis", False
                         )
-                        cache_enabled = st.session_state.get("cache_enabled", True)
 
-                        bookmarks = None
-                        cache_hit = False
+                        # 強制再解析の場合はキャッシュを無効化
+                        if force_reanalysis:
+                            st.session_state["cache_enabled"] = False
+                            add_log("🔄 強制再解析モード: キャッシュを無効化")
 
-                        # キャッシュチェック（強制再解析でない場合）
-                        if cache_enabled and not force_reanalysis:
-                            try:
-                                add_log("🗄️ キャッシュをチェック中...")
-                                cached_result = cache_manager.get_cached_result(content)
-
-                                if cached_result:
-                                    bookmarks = cached_result
-                                    cache_hit = True
-                                    add_log(
-                                        "✅ キャッシュヒット！既存の解析結果を使用します"
-                                    )
-                                else:
-                                    add_log("❌ キャッシュミス。新規解析を実行します")
-                            except Exception as e:
-                                add_log(f"⚠️ キャッシュチェックエラー: {str(e)}")
-                                logger.error(f"キャッシュチェックエラー: {e}")
-
-                        # 新規解析（キャッシュヒットしなかった場合）
-                        if bookmarks is None:
-                            parser = BookmarkParser()
-                            add_log("🔍 HTMLパーサーを初期化...")
-
-                            # ブックマーク解析の詳細ログ
-                            add_log("📄 HTMLコンテンツを解析中...")
-                            add_log("🔍 HTMLパーサーでDOMツリーを構築中...")
-                            add_log("📂 フォルダ構造を解析中...")
-                            add_log("🔗 ブックマークリンクを抽出中...")
-
-                            bookmarks = parser.parse_bookmarks(content)
-
-                            # 解析結果をキャッシュに保存
-                            if cache_enabled and bookmarks:
-                                try:
-                                    cache_manager.save_to_cache(content, bookmarks)
-                                    add_log("💾 解析結果をキャッシュに保存しました")
-                                except Exception as e:
-                                    add_log(f"⚠️ キャッシュ保存エラー: {str(e)}")
-                                    logger.error(f"キャッシュ保存エラー: {e}")
-
-                        parse_time = time.time() - start_time
-
-                        if cache_hit:
-                            add_log(
-                                f"📚 ブックマーク解析完了（キャッシュ使用）: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
+                        # 最適化された解析を実行
+                        bookmarks, cache_hit, analysis_stats = (
+                            execute_optimized_bookmark_analysis(
+                                content, cache_manager, add_log
                             )
-                        else:
-                            add_log(
-                                f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
-                            )
-
-                        # ブックマーク統計の詳細ログ
-                        if bookmarks:
-                            domains = set(urlparse(b.url).netloc for b in bookmarks)
-                            folders = set(
-                                "/".join(b.folder_path)
-                                for b in bookmarks
-                                if b.folder_path
-                            )
-                            add_log(
-                                f"📊 統計: {len(domains)}個のドメイン, {len(folders)}個のフォルダ"
-                            )
+                        )
 
                         # キャッシュ結果の表示
                         if cache_hit:
@@ -605,7 +603,8 @@ def main():
 
                         # セッション状態に保存
                         st.session_state["bookmarks"] = bookmarks
-                        st.session_state["parser"] = parser
+                        st.session_state["parser"] = BookmarkParser()
+                        st.session_state["analysis_stats"] = analysis_stats
 
                         # ステップ2: ディレクトリスキャン
                         status_text.text("📂 既存ファイルをスキャン中...")
@@ -931,6 +930,187 @@ def main():
     """,
         unsafe_allow_html=True,
     )
+
+
+def execute_optimized_bookmark_analysis(
+    content: str, cache_manager: CacheManager, add_log_func
+):
+    """
+    最適化されたブックマーク解析を実行
+
+    Args:
+        content: HTMLコンテンツ
+        cache_manager: キャッシュマネージャー
+        add_log_func: ログ追加関数
+
+    Returns:
+        tuple: (bookmarks, cache_hit, analysis_stats)
+    """
+    start_time = time.time()
+    bookmarks = None
+    cache_hit = False
+
+    # パフォーマンス最適化の初期化
+    optimizer = PerformanceOptimizer()
+    progress_display = ProgressDisplay()
+
+    try:
+        # キャッシュチェック
+        add_log_func("🔍 キャッシュをチェック中...")
+        cache_enabled = st.session_state.get("cache_enabled", True)
+
+        if cache_enabled:
+            try:
+                bookmarks = cache_manager.load_from_cache(content)
+                if bookmarks:
+                    cache_hit = True
+                    add_log_func("✅ キャッシュヒット！既存の解析結果を使用します")
+                else:
+                    add_log_func("❌ キャッシュミス。新規解析を実行します")
+            except Exception as e:
+                error_logger.log_cache_error(
+                    cache_manager.get_cache_key(content), "read", str(e)
+                )
+                add_log_func(f"⚠️ キャッシュチェックエラー: {str(e)}")
+
+        # 新規解析（キャッシュヒットしなかった場合）
+        if bookmarks is None:
+            add_log_func("🚀 最適化された解析を開始...")
+
+            # パフォーマンス監視開始
+            enable_monitoring = st.session_state.get("enable_memory_monitoring", True)
+            if enable_monitoring:
+                initial_memory = optimizer.memory_monitor.get_memory_usage()
+                add_log_func(
+                    f"📊 メモリ使用量監視を開始... (初期: {initial_memory:.1f}MB)"
+                )
+
+            # 進捗表示の初期化
+            try:
+                progress_display.initialize("ブックマーク解析", len(content) // 1000)
+            except Exception as e:
+                error_logger.log_ui_display_error(
+                    "progress_display", "initialization", str(e)
+                )
+                add_log_func(f"⚠️ 進捗表示の初期化に失敗: {str(e)}")
+
+            try:
+                # 最適化されたパーサーを使用
+                parser = BookmarkParser()
+
+                # バッチ処理設定
+                batch_size = st.session_state.get("batch_size", 100)
+                use_parallel = st.session_state.get("use_parallel_processing", True)
+
+                add_log_func(
+                    f"⚙️ 設定: バッチサイズ={batch_size}, 並列処理={'有効' if use_parallel else '無効'}"
+                )
+
+                # 最適化された解析実行
+                def progress_callback(current, total, message=""):
+                    progress_display.update_progress(current, total, message)
+                    if message:
+                        add_log_func(f"📊 {message}")
+
+                bookmarks = parser.parse_bookmarks_optimized(
+                    content,
+                    batch_size=batch_size,
+                    use_parallel=use_parallel,
+                    progress_callback=progress_callback,
+                )
+
+                # 解析結果をキャッシュに保存
+                if cache_enabled and bookmarks:
+                    try:
+                        cache_manager.save_to_cache(content, bookmarks)
+                        add_log_func("💾 解析結果をキャッシュに保存しました")
+                    except Exception as e:
+                        error_logger.log_cache_error(
+                            cache_manager.get_cache_key(content), "write", str(e)
+                        )
+                        add_log_func(f"⚠️ キャッシュ保存エラー: {str(e)}")
+
+            except Exception as e:
+                error_logger.log_performance_error(
+                    "bookmark_parsing", time.time() - start_time, str(e)
+                )
+
+                # エラー回復戦略を実行
+                recovery_result = error_recovery.execute_recovery_action(
+                    "performance",
+                    {"batch_size": batch_size, "use_parallel": use_parallel},
+                )
+
+                if recovery_result["success"]:
+                    add_log_func(f"🔄 エラー回復: {recovery_result['message']}")
+
+                    # 標準処理にフォールバック
+                    if recovery_result.get("optimization_disabled"):
+                        add_log_func("⚠️ 最適化を無効にして標準処理で再試行...")
+                        bookmarks = parser.parse_bookmarks(content)
+                else:
+                    raise e
+
+            finally:
+                # パフォーマンス監視終了
+                if enable_monitoring:
+                    final_memory = optimizer.memory_monitor.get_memory_usage()
+                    memory_delta = optimizer.memory_monitor.get_memory_delta()
+                    stats = {
+                        "initial_memory_mb": locals().get("initial_memory", 0),
+                        "final_memory_mb": final_memory,
+                        "peak_memory_mb": final_memory,  # 現在のメモリ使用量をピークとして使用
+                        "memory_delta_mb": memory_delta,
+                    }
+                    add_log_func(
+                        f"📊 メモリ使用量監視を終了 (最終: {final_memory:.1f}MB, 変化: {memory_delta:+.1f}MB)"
+                    )
+                else:
+                    stats = {}
+                progress_display.complete()
+
+        parse_time = time.time() - start_time
+
+        # 解析結果のログ
+        if cache_hit:
+            add_log_func(
+                f"📚 ブックマーク解析完了（キャッシュ使用）: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
+            )
+        else:
+            add_log_func(
+                f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
+            )
+
+            # パフォーマンス統計の表示
+            if "stats" in locals():
+                memory_usage = stats.get("peak_memory_mb", 0)
+                add_log_func(f"📊 パフォーマンス: メモリ使用量 {memory_usage:.1f}MB")
+
+        # ブックマーク統計
+        if bookmarks:
+            domains = set(urlparse(b.url).netloc for b in bookmarks)
+            folders = set("/".join(b.folder_path) for b in bookmarks if b.folder_path)
+            add_log_func(
+                f"📊 統計: {len(domains)}個のドメイン, {len(folders)}個のフォルダ"
+            )
+
+        analysis_stats = {
+            "parse_time": parse_time,
+            "cache_hit": cache_hit,
+            "bookmark_count": len(bookmarks) if bookmarks else 0,
+            "performance_stats": locals().get("stats", {}),
+        }
+
+        return bookmarks, cache_hit, analysis_stats
+
+    except Exception as e:
+        error_logger.log_error(
+            type("DummyBookmark", (), {"url": "unknown", "title": "unknown"})(),
+            str(e),
+            "unexpected",
+        )
+        add_log_func(f"❌ 解析エラー: {str(e)}")
+        raise e
 
 
 if __name__ == "__main__":
