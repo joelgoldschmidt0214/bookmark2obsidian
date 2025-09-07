@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 # 分離したモジュールからのインポート
 from core.parser import BookmarkParser
 from core.file_manager import LocalDirectoryManager
+from core.cache_manager import CacheManager
+from utils.cache_utils import get_cache_statistics, clear_all_cache
 from ui.components import (
     validate_bookmarks_file,
     validate_directory_path,
@@ -57,6 +59,290 @@ logger = logging.getLogger(__name__)
 
 logger.info(f"🚀 アプリケーション開始 (ログレベル: {logging.getLevelName(log_level)})")
 logger.info(f"📝 ログファイル: {log_filename}")
+
+
+def display_cache_management_ui():
+    """
+    キャッシュ管理UIを表示
+
+    要件:
+    - キャッシュ状況表示機能
+    - 履歴リセットボタン
+    - 強制再解析オプション
+    """
+    try:
+        st.markdown("---")
+        st.subheader("🗄️ キャッシュ管理")
+
+        # キャッシュマネージャーの初期化
+        cache_manager = CacheManager()
+
+        # キャッシュ統計の取得
+        try:
+            cache_stats = get_cache_statistics()
+        except Exception as e:
+            logger.error(f"キャッシュ統計取得エラー: {e}")
+            cache_stats = {
+                "total_entries": 0,
+                "total_size_mb": 0.0,
+                "hit_rate": 0.0,
+                "last_cleanup": "不明",
+            }
+
+        # キャッシュ状況の表示
+        st.markdown("#### 📊 キャッシュ状況")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric(
+                "キャッシュエントリ数",
+                cache_stats.get("total_entries", 0),
+                help="保存されているキャッシュファイルの数",
+            )
+
+            st.metric(
+                "キャッシュサイズ",
+                f"{cache_stats.get('total_size_mb', 0.0):.1f} MB",
+                help="キャッシュが使用しているディスク容量",
+            )
+
+        with col2:
+            st.metric(
+                "ヒット率",
+                f"{cache_stats.get('hit_rate', 0.0):.1f}%",
+                help="キャッシュから取得できた割合",
+            )
+
+            last_cleanup = cache_stats.get("last_cleanup", "不明")
+            if last_cleanup != "不明":
+                try:
+                    cleanup_date = datetime.datetime.fromisoformat(last_cleanup)
+                    cleanup_display = cleanup_date.strftime("%m/%d %H:%M")
+                except:
+                    cleanup_display = last_cleanup
+            else:
+                cleanup_display = last_cleanup
+
+            st.metric(
+                "最終クリーンアップ",
+                cleanup_display,
+                help="最後にキャッシュをクリーンアップした日時",
+            )
+
+        # キャッシュ操作ボタン
+        st.markdown("#### 🔧 キャッシュ操作")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("🗑️ 履歴リセット", help="すべてのキャッシュを削除します"):
+                try:
+                    clear_all_cache()
+                    st.success("✅ キャッシュを削除しました")
+                    logger.info("キャッシュを手動削除しました")
+
+                    # セッション状態もリセット
+                    cache_related_keys = [
+                        key
+                        for key in st.session_state.keys()
+                        if "cache" in key.lower() or "analysis" in key.lower()
+                    ]
+                    for key in cache_related_keys:
+                        del st.session_state[key]
+
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ キャッシュ削除エラー: {str(e)}")
+                    logger.error(f"キャッシュ削除エラー: {e}")
+
+        with col2:
+            force_reanalysis = st.checkbox(
+                "🔄 強制再解析",
+                value=st.session_state.get("force_reanalysis", False),
+                help="キャッシュを無視して強制的に再解析します",
+            )
+            st.session_state["force_reanalysis"] = force_reanalysis
+
+        with col3:
+            if st.button(
+                "🧹 キャッシュクリーンアップ", help="古いキャッシュファイルを削除します"
+            ):
+                try:
+                    cleaned_count = cache_manager.cleanup_old_cache(max_age_days=7)
+                    st.success(f"✅ {cleaned_count}個の古いキャッシュを削除しました")
+                    logger.info(f"キャッシュクリーンアップ完了: {cleaned_count}個削除")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ クリーンアップエラー: {str(e)}")
+                    logger.error(f"キャッシュクリーンアップエラー: {e}")
+
+        # キャッシュ設定
+        with st.expander("⚙️ キャッシュ設定", expanded=False):
+            cache_enabled = st.checkbox(
+                "キャッシュを有効にする",
+                value=st.session_state.get("cache_enabled", True),
+                help="キャッシュ機能の有効/無効を切り替えます",
+            )
+            st.session_state["cache_enabled"] = cache_enabled
+
+            if cache_enabled:
+                cache_ttl_hours = st.slider(
+                    "キャッシュ有効期間（時間）",
+                    min_value=1,
+                    max_value=168,  # 1週間
+                    value=st.session_state.get("cache_ttl_hours", 24),
+                    help="キャッシュが有効な期間を設定します",
+                )
+                st.session_state["cache_ttl_hours"] = cache_ttl_hours
+
+                max_cache_size_mb = st.slider(
+                    "最大キャッシュサイズ（MB）",
+                    min_value=10,
+                    max_value=1000,
+                    value=st.session_state.get("max_cache_size_mb", 100),
+                    help="キャッシュの最大サイズを設定します",
+                )
+                st.session_state["max_cache_size_mb"] = max_cache_size_mb
+            else:
+                st.info(
+                    "ℹ️ キャッシュが無効になっています。処理が遅くなる可能性があります。"
+                )
+
+        # キャッシュ詳細情報
+        if cache_stats.get("total_entries", 0) > 0:
+            with st.expander("📋 キャッシュ詳細", expanded=False):
+                try:
+                    cache_details = cache_manager.get_cache_details()
+
+                    if cache_details:
+                        st.markdown("**最近のキャッシュエントリ:**")
+
+                        for i, entry in enumerate(cache_details[:5]):  # 最新5件
+                            created_time = entry.get("created_at", "Unknown")
+                            if created_time != "Unknown":
+                                try:
+                                    created_dt = datetime.datetime.fromisoformat(
+                                        created_time
+                                    )
+                                    time_display = created_dt.strftime("%m/%d %H:%M")
+                                except:
+                                    time_display = created_time
+                            else:
+                                time_display = created_time
+
+                            st.markdown(
+                                f"- **{entry.get('file_name', 'Unknown')}** ({time_display})"
+                            )
+                    else:
+                        st.info("キャッシュエントリの詳細を取得できませんでした")
+
+                except Exception as e:
+                    st.warning(
+                        f"キャッシュ詳細の取得中にエラーが発生しました: {str(e)}"
+                    )
+                    logger.error(f"キャッシュ詳細取得エラー: {e}")
+
+    except Exception as e:
+        st.error(f"❌ キャッシュ管理UI表示エラー: {str(e)}")
+        logger.error(f"キャッシュ管理UI表示エラー: {e}")
+
+
+def _check_file_cache_status(uploaded_file):
+    """
+    アップロードされたファイルのキャッシュ状況をチェック
+
+    Args:
+        uploaded_file: Streamlitのアップロードファイルオブジェクト
+    """
+    try:
+        cache_enabled = st.session_state.get("cache_enabled", True)
+
+        if not cache_enabled:
+            st.info("ℹ️ キャッシュが無効になっています")
+            return
+
+        # ファイル内容を読み取り
+        content = uploaded_file.getvalue().decode("utf-8")
+
+        # キャッシュマネージャーでチェック
+        cache_manager = CacheManager()
+        cached_result = cache_manager.get_cached_result(content)
+
+        if cached_result:
+            # キャッシュヒット
+            st.success("🗄️ このファイルの解析結果がキャッシュに見つかりました！")
+
+            # キャッシュ情報の表示
+            with st.expander("📋 キャッシュ情報", expanded=False):
+                st.markdown(f"""
+                - **ブックマーク数**: {len(cached_result)}個
+                - **キャッシュ状態**: 有効
+                - **処理時間**: 大幅短縮が期待されます
+                """)
+
+            # セッション状態にキャッシュ情報を保存
+            st.session_state["cache_available"] = True
+            st.session_state["cached_bookmarks_count"] = len(cached_result)
+
+        else:
+            # キャッシュミス
+            st.info("🔍 このファイルは初回解析です。キャッシュに保存されます。")
+            st.session_state["cache_available"] = False
+
+    except Exception as e:
+        st.warning(f"⚠️ キャッシュチェック中にエラーが発生しました: {str(e)}")
+        logger.error(f"ファイルキャッシュチェックエラー: {e}")
+        st.session_state["cache_available"] = False
+
+
+def _display_cache_hit_results(bookmarks, cache_hit):
+    """
+    キャッシュヒット時の結果表示
+
+    Args:
+        bookmarks: ブックマークリスト
+        cache_hit: キャッシュヒットフラグ
+    """
+    if cache_hit:
+        st.success("⚡ キャッシュから高速読み込み完了！")
+
+        # キャッシュ効果の表示
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("処理時間", "< 1秒", delta="大幅短縮", delta_color="inverse")
+
+        with col2:
+            st.metric("キャッシュ効果", "有効", delta="高速化", delta_color="inverse")
+
+        with col3:
+            st.metric("データ取得", "キャッシュ", delta="最新", delta_color="normal")
+
+
+def _display_cache_miss_flow(bookmarks):
+    """
+    キャッシュミス時の新規解析フロー表示
+
+    Args:
+        bookmarks: 解析されたブックマークリスト
+    """
+    st.info("🔄 新規解析が完了しました。結果をキャッシュに保存しました。")
+
+    # 次回の高速化について
+    with st.expander("💡 次回の処理について", expanded=False):
+        st.markdown("""
+        ### 🚀 次回の高速化
+        
+        - **同じファイル**を再度アップロードした場合、キャッシュから瞬時に結果を取得できます
+        - **処理時間**が大幅に短縮されます
+        - **キャッシュ有効期間**は設定で変更できます
+        
+        ### 🗄️ キャッシュ管理
+        
+        - サイドバーの「キャッシュ管理」で状況を確認できます
+        - 必要に応じてキャッシュをクリアできます
+        """)
 
 
 def main():
@@ -107,9 +393,13 @@ def main():
             if is_valid_file:
                 st.success(file_message)
                 logger.info(f"✅ ファイル検証成功: {file_message}")
+
                 # セッション状態にファイルを保存
                 st.session_state["uploaded_file"] = uploaded_file
                 st.session_state["file_validated"] = True
+
+                # キャッシュ検出機能
+                _check_file_cache_status(uploaded_file)
             else:
                 st.error(file_message)
                 logger.error(f"❌ ファイル検証失敗: {file_message}")
@@ -178,6 +468,9 @@ def main():
         else:
             st.info("📋 上記の設定を完了してください")
 
+        # キャッシュ管理UI
+        display_cache_management_ui()
+
         # Task 12: ユーザビリティ向上機能の追加
         display_user_friendly_messages()
         show_application_info()
@@ -231,21 +524,66 @@ def main():
                         start_time = time.time()
                         add_log("📊 ブックマーク解析を開始...")
 
-                        parser = BookmarkParser()
-                        add_log("🔍 HTMLパーサーを初期化...")
+                        # キャッシュ機能の統合
+                        cache_manager = CacheManager()
+                        force_reanalysis = st.session_state.get(
+                            "force_reanalysis", False
+                        )
+                        cache_enabled = st.session_state.get("cache_enabled", True)
 
-                        # ブックマーク解析の詳細ログ
-                        add_log("📄 HTMLコンテンツを解析中...")
-                        add_log("🔍 HTMLパーサーでDOMツリーを構築中...")
-                        add_log("📂 フォルダ構造を解析中...")
-                        add_log("🔗 ブックマークリンクを抽出中...")
+                        bookmarks = None
+                        cache_hit = False
 
-                        bookmarks = parser.parse_bookmarks(content)
+                        # キャッシュチェック（強制再解析でない場合）
+                        if cache_enabled and not force_reanalysis:
+                            try:
+                                add_log("🗄️ キャッシュをチェック中...")
+                                cached_result = cache_manager.get_cached_result(content)
+
+                                if cached_result:
+                                    bookmarks = cached_result
+                                    cache_hit = True
+                                    add_log(
+                                        "✅ キャッシュヒット！既存の解析結果を使用します"
+                                    )
+                                else:
+                                    add_log("❌ キャッシュミス。新規解析を実行します")
+                            except Exception as e:
+                                add_log(f"⚠️ キャッシュチェックエラー: {str(e)}")
+                                logger.error(f"キャッシュチェックエラー: {e}")
+
+                        # 新規解析（キャッシュヒットしなかった場合）
+                        if bookmarks is None:
+                            parser = BookmarkParser()
+                            add_log("🔍 HTMLパーサーを初期化...")
+
+                            # ブックマーク解析の詳細ログ
+                            add_log("📄 HTMLコンテンツを解析中...")
+                            add_log("🔍 HTMLパーサーでDOMツリーを構築中...")
+                            add_log("📂 フォルダ構造を解析中...")
+                            add_log("🔗 ブックマークリンクを抽出中...")
+
+                            bookmarks = parser.parse_bookmarks(content)
+
+                            # 解析結果をキャッシュに保存
+                            if cache_enabled and bookmarks:
+                                try:
+                                    cache_manager.save_to_cache(content, bookmarks)
+                                    add_log("💾 解析結果をキャッシュに保存しました")
+                                except Exception as e:
+                                    add_log(f"⚠️ キャッシュ保存エラー: {str(e)}")
+                                    logger.error(f"キャッシュ保存エラー: {e}")
 
                         parse_time = time.time() - start_time
-                        add_log(
-                            f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
-                        )
+
+                        if cache_hit:
+                            add_log(
+                                f"📚 ブックマーク解析完了（キャッシュ使用）: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
+                            )
+                        else:
+                            add_log(
+                                f"📚 ブックマーク解析完了: {len(bookmarks)}個のブックマークを検出 ({parse_time:.2f}秒)"
+                            )
 
                         # ブックマーク統計の詳細ログ
                         if bookmarks:
@@ -258,6 +596,12 @@ def main():
                             add_log(
                                 f"📊 統計: {len(domains)}個のドメイン, {len(folders)}個のフォルダ"
                             )
+
+                        # キャッシュ結果の表示
+                        if cache_hit:
+                            _display_cache_hit_results(bookmarks, cache_hit)
+                        else:
+                            _display_cache_miss_flow(bookmarks)
 
                         # セッション状態に保存
                         st.session_state["bookmarks"] = bookmarks

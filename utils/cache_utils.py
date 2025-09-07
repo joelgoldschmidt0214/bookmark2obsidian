@@ -380,3 +380,206 @@ class CacheDataConverter:
             data=data,
             metadata=metadata or {},
         )
+
+
+# グローバル関数
+
+
+def get_cache_statistics() -> Dict[str, Any]:
+    """
+    キャッシュ統計情報を取得
+
+    Returns:
+        Dict[str, Any]: キャッシュ統計情報
+    """
+    try:
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager()
+
+        # キャッシュディレクトリの確認
+        cache_dir = cache_manager.cache_dir
+        if not cache_dir.exists():
+            return {
+                "total_entries": 0,
+                "total_size_mb": 0.0,
+                "hit_rate": 0.0,
+                "last_cleanup": "未実行",
+            }
+
+        # キャッシュファイルの収集
+        cache_files = list(cache_dir.glob("*.json"))
+        total_entries = len(cache_files)
+
+        # 総サイズの計算
+        total_size = 0
+        for file_path in cache_files:
+            if file_path.exists():
+                total_size += file_path.stat().st_size
+        total_size_mb = total_size / 1024 / 1024
+
+        # ヒット率の計算（簡易版）
+        hit_rate = 0.0
+        try:
+            # メタデータファイルからヒット率を取得
+            metadata_file = cache_dir / "cache_metadata.json"
+            if metadata_file.exists():
+                import json
+
+                with open(metadata_file, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                    hit_rate = metadata.get("hit_rate", 0.0)
+        except Exception:
+            pass
+
+        # 最終クリーンアップ時刻
+        last_cleanup = "未実行"
+        try:
+            cleanup_file = cache_dir / "last_cleanup.txt"
+            if cleanup_file.exists():
+                last_cleanup = cleanup_file.read_text().strip()
+        except Exception:
+            pass
+
+        return {
+            "total_entries": total_entries,
+            "total_size_mb": total_size_mb,
+            "hit_rate": hit_rate,
+            "last_cleanup": last_cleanup,
+        }
+
+    except Exception as e:
+        logger.error(f"キャッシュ統計取得エラー: {e}")
+        return {
+            "total_entries": 0,
+            "total_size_mb": 0.0,
+            "hit_rate": 0.0,
+            "last_cleanup": "エラー",
+        }
+
+
+def clear_all_cache() -> bool:
+    """
+    すべてのキャッシュをクリア
+
+    Returns:
+        bool: 成功したかどうか
+    """
+    try:
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager()
+        cache_dir = cache_manager.cache_dir
+
+        if not cache_dir.exists():
+            return True
+
+        # すべてのキャッシュファイルを削除
+        deleted_count = 0
+        for file_path in cache_dir.glob("*"):
+            if file_path.is_file():
+                try:
+                    file_path.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"ファイル削除エラー: {file_path} - {e}")
+
+        logger.info(f"キャッシュクリア完了: {deleted_count}個のファイルを削除")
+        return True
+
+    except Exception as e:
+        logger.error(f"キャッシュクリアエラー: {e}")
+        return False
+
+
+def update_cache_hit_rate(hit: bool) -> None:
+    """
+    キャッシュヒット率を更新
+
+    Args:
+        hit: ヒットしたかどうか
+    """
+    try:
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager()
+        cache_dir = cache_manager.cache_dir
+        cache_dir.mkdir(exist_ok=True)
+
+        metadata_file = cache_dir / "cache_metadata.json"
+
+        # 既存のメタデータを読み込み
+        metadata = {"total_requests": 0, "total_hits": 0, "hit_rate": 0.0}
+
+        if metadata_file.exists():
+            try:
+                import json
+
+                with open(metadata_file, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+            except Exception:
+                pass
+
+        # 統計を更新
+        metadata["total_requests"] += 1
+        if hit:
+            metadata["total_hits"] += 1
+
+        metadata["hit_rate"] = (
+            metadata["total_hits"] / metadata["total_requests"]
+        ) * 100
+
+        # メタデータを保存
+        import json
+
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"キャッシュヒット率更新エラー: {e}")
+
+
+def cleanup_expired_cache(max_age_days: int = 7) -> int:
+    """
+    期限切れキャッシュをクリーンアップ
+
+    Args:
+        max_age_days: 最大保持日数
+
+    Returns:
+        int: 削除されたファイル数
+    """
+    try:
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager()
+        cache_dir = cache_manager.cache_dir
+
+        if not cache_dir.exists():
+            return 0
+
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+        deleted_count = 0
+
+        for file_path in cache_dir.glob("*.json"):
+            try:
+                # ファイルの作成時刻をチェック
+                file_time = datetime.datetime.fromtimestamp(file_path.stat().st_mtime)
+
+                if file_time < cutoff_time:
+                    file_path.unlink()
+                    deleted_count += 1
+
+            except Exception as e:
+                logger.warning(f"ファイル削除エラー: {file_path} - {e}")
+
+        # クリーンアップ時刻を記録
+        cleanup_file = cache_dir / "last_cleanup.txt"
+        cleanup_file.write_text(datetime.datetime.now().isoformat())
+
+        logger.info(f"期限切れキャッシュクリーンアップ完了: {deleted_count}個削除")
+        return deleted_count
+
+    except Exception as e:
+        logger.error(f"期限切れキャッシュクリーンアップエラー: {e}")
+        return 0
