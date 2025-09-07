@@ -1008,7 +1008,7 @@ def execute_optimized_bookmark_analysis(
 
                 # 最適化された解析実行
                 def progress_callback(current, total, message=""):
-                    progress_display.update_progress(current, total, message)
+                    progress_display.update_progress(current, current_item=message)
                     if message:
                         add_log_func(f"📊 {message}")
 

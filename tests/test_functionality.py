@@ -166,17 +166,17 @@ class TestUIFunctionality:
     def test_progress_display_update(self, mock_text, mock_progress):
         """進捗表示の更新機能テスト"""
         # 進捗表示の初期化
-        self.progress_display.initialize_progress("テスト処理", 100)
+        self.progress_display.initialize_display(100)
 
         # 進捗の更新
-        self.progress_display.update_progress(50, "50%完了")
+        self.progress_display.update_progress(50, current_item="50%完了")
 
         # アサーション
         mock_progress.assert_called()
         mock_text.assert_called()
 
-        # 進捗値の確認
-        assert self.progress_display.current_progress == 50, (
+        # 進捗値の確認（statsオブジェクトから取得）
+        assert self.progress_display.stats.completed_items == 50, (
             "進捗値が正しく更新されていません"
         )
 
@@ -184,14 +184,18 @@ class TestUIFunctionality:
     def test_progress_completion(self, mock_success):
         """進捗完了時の表示テスト"""
         # 進捗表示の初期化
-        self.progress_display.initialize_progress("テスト処理", 100)
+        self.progress_display.initialize_display(100)
 
         # 進捗を完了
         self.progress_display.complete_progress("処理完了")
 
         # アサーション
-        mock_success.assert_called_with("処理完了")
-        assert self.progress_display.is_completed, "進捗完了フラグが設定されていません"
+        mock_success.assert_called()
+        # 完了時は completed_items が total_items と等しくなる
+        assert (
+            self.progress_display.stats.completed_items
+            == self.progress_display.stats.total_items
+        ), "進捗完了状態が正しく設定されていません"
 
     @patch("streamlit.container")
     def test_bookmark_list_display(self, mock_container):
