@@ -567,7 +567,7 @@ def main():
                         def add_log(message):
                             logs.append(f"• {message}")
                             log_placeholder.text_area(
-                                "📝 処理ログ", "\\n".join(logs[-10:]), height=200
+                                "📝 処理ログ", "\n".join(logs[-10:]), height=200
                             )
 
                         # ステップ1: ブックマーク解析
@@ -710,7 +710,7 @@ def main():
 
                     # 解析結果の表示
                     if bookmarks:
-                        stats = parser.get_statistics(bookmarks)
+                        stats = BookmarkParser.get_statistics(bookmarks)
 
                         # 統計情報の表示
                         directory_manager = st.session_state["directory_manager"]
@@ -987,7 +987,7 @@ def execute_optimized_bookmark_analysis(
 
             # 進捗表示の初期化
             try:
-                progress_display.initialize("ブックマーク解析", len(content) // 1000)
+                progress_display.initialize_display(len(content) // 1000)
             except Exception as e:
                 error_logger.log_ui_display_error(
                     "progress_display", "initialization", str(e)
@@ -1067,7 +1067,7 @@ def execute_optimized_bookmark_analysis(
                     )
                 else:
                     stats = {}
-                progress_display.complete()
+                progress_display.complete_progress("ブックマーク解析完了")
 
         parse_time = time.time() - start_time
 
