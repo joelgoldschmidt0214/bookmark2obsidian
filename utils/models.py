@@ -69,3 +69,23 @@ class Page:
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_selected: bool = True
     status: PageStatus = PageStatus.PENDING
+
+
+@dataclass
+class CacheEntry:
+    """
+    キャッシュエントリを格納するデータクラス
+
+    解析結果やディレクトリ構造などのキャッシュデータを管理します。
+
+    Attributes:
+        file_hash: ファイルのハッシュ値（一意識別子）
+        timestamp: キャッシュ作成時刻
+        data: キャッシュされたデータ
+        metadata: キャッシュのメタデータ情報
+    """
+
+    file_hash: str
+    timestamp: datetime.datetime
+    data: Any
+    metadata: Dict[str, Any] = field(default_factory=dict)
