@@ -222,6 +222,11 @@ class ProgressDisplay:
     def _update_ui_elements(self) -> None:
         """UIエレメントを更新"""
         try:
+            # デバッグログ
+            logger.debug(
+                f"UI更新: 完了={self.stats.completed_items}, 処理速度={self.stats.items_per_second:.1f}"
+            )
+
             # 進捗バーの更新
             progress_value = self.stats.completion_rate / 100
             self._ui_elements["progress_bar"].progress(progress_value)
@@ -230,7 +235,7 @@ class ProgressDisplay:
             status_text = f"📄 処理中: {self.stats.current_item[:50]}... ({self.stats.completed_items}/{self.stats.total_items})"
             self._ui_elements["status_text"].text(status_text)
 
-            # メトリクスの更新
+            # メトリクスの更新（強制的に新しい値で更新）
             self._ui_elements["completed_metric"].metric(
                 "完了",
                 f"{self.stats.completed_items}/{self.stats.total_items}",
@@ -247,9 +252,9 @@ class ProgressDisplay:
                 "エラー", str(self.stats.error_count)
             )
 
-            self._ui_elements["rate_metric"].metric(
-                "処理速度", f"{self.stats.items_per_second:.1f} items/sec"
-            )
+            # 処理速度の表示（0の場合も明示的に表示）
+            rate_text = f"{self.stats.items_per_second:.1f} items/sec"
+            self._ui_elements["rate_metric"].metric("処理速度", rate_text)
 
             # パフォーマンス統計の更新
             elapsed_str = str(timedelta(seconds=int(self.stats.elapsed_time)))

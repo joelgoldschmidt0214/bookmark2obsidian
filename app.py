@@ -710,7 +710,7 @@ def main():
 
                     # 解析結果の表示
                     if bookmarks:
-                        stats = BookmarkParser.get_statistics(bookmarks)
+                        stats = parser.get_statistics(bookmarks)
 
                         # 統計情報の表示
                         directory_manager = st.session_state["directory_manager"]
@@ -1008,7 +1008,28 @@ def execute_optimized_bookmark_analysis(
 
                 # 最適化された解析実行
                 def progress_callback(current, total, message=""):
-                    progress_display.update_progress(current, current_item=message)
+                    # 処理速度と統計情報を計算
+                    import time
+
+                    elapsed = time.time() - start_time
+                    items_per_sec = current / elapsed if elapsed > 0 else 0
+
+                    # メモリ使用量を取得
+                    try:
+                        memory_usage = optimizer.monitor_memory_usage()
+                        memory_mb = memory_usage.get("current_mb", 0.0)
+                    except:
+                        memory_mb = 0.0
+
+                    # 進捗表示を更新（統計情報を含む）
+                    progress_display.update_progress(
+                        completed=current,
+                        current_item=message,
+                        success_count=current,  # 簡易的に完了数を成功数とする
+                        error_count=0,  # エラー数は別途管理が必要
+                        memory_usage_mb=memory_mb,
+                    )
+
                     if message:
                         add_log_func(f"📊 {message}")
 
