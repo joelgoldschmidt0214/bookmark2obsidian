@@ -92,7 +92,7 @@ class BookmarkParser:
             folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
 
             # ファイル名を生成（タイトルから安全なファイル名を作成）
-            filename = self._sanitize_filename(bookmark.title)
+            filename = self._sanitize_filename(bookmark.title, bookmark.folder_path)
 
             if folder_path not in structure:
                 structure[folder_path] = []
@@ -129,7 +129,7 @@ class BookmarkParser:
 
         # DLエレメント内のDTを処理（Pタグ内にある場合も考慮）
         # まず、このDLレベルのDTエレメントを取得
-        all_dt_in_dl = dl_element.find_all("dt")
+        # all_dt_in_dl = dl_element.find_all("dt")  # 未使用のため削除
 
         # このDLの直接の子DTエレメントのみを取得（pタグ内も含む）
         direct_dt_elements = []
@@ -308,12 +308,13 @@ class BookmarkParser:
         except Exception:
             return False
 
-    def _sanitize_filename(self, title: str) -> str:
+    def _sanitize_filename(self, title: str, folder_path: List[str] = None) -> str:
         """
-        タイトルから安全なファイル名を生成
+        タイトルから安全なファイル名を生成（パス長制限を考慮）
 
         Args:
             title: 元のタイトル
+            folder_path: フォルダパス（パス長計算用）
 
         Returns:
             str: 安全なファイル名
@@ -331,9 +332,27 @@ class BookmarkParser:
         if not filename:
             filename = "untitled"
 
-        # 長すぎる場合は切り詰め（拡張子を考慮して200文字以内）
-        if len(filename) > 200:
-            filename = filename[:200]
+        # パス長制限を考慮した動的な長さ制限
+        folder_path_str = "/".join(folder_path) if folder_path else ""
+        folder_path_len = len(folder_path_str)
+        extension_len = 9  # ".markdown" の長さ
+
+        # 安全マージンを含めて計算（Windows制限260文字 - 安全マージン10文字）
+        # ベースパス長は推定値を使用（実際のパスが不明なため）
+        estimated_base_len = 50  # 推定ベースパス長
+        max_total_len = 250
+        available_len = (
+            max_total_len - estimated_base_len - folder_path_len - extension_len - 2
+        )
+
+        # 最小限の長さを保証（20文字以上）
+        max_filename_len = max(20, min(100, available_len))
+
+        if len(filename) > max_filename_len:
+            filename = filename[:max_filename_len]
+            # 切り詰めた場合は末尾に識別子を追加
+            if max_filename_len > 10:
+                filename = filename[:-3] + "..."
 
         return filename
 

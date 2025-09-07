@@ -8,14 +8,12 @@
 
 import json
 import hashlib
-import os
-import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import datetime
 import logging
 
-from utils.models import Bookmark, CacheEntry
+from utils.models import Bookmark
 
 logger = logging.getLogger(__name__)
 
@@ -577,6 +575,23 @@ class CacheManager:
         except Exception as e:
             logger.error(f"キャッシュ保存エラー: {e}")
             return False
+
+    def load_from_cache(self, file_content: str) -> Optional[List[Bookmark]]:
+        """
+        ファイル内容からキャッシュを読み込み
+
+        Args:
+            file_content: ファイル内容
+
+        Returns:
+            Optional[List[Bookmark]]: キャッシュされたブックマークリスト（存在しない場合はNone）
+        """
+        try:
+            file_hash = self.calculate_file_hash(file_content)
+            return self.load_bookmark_cache(file_hash)
+        except Exception as e:
+            logger.error(f"キャッシュ読み込みエラー: {e}")
+            return None
 
     def get_cache_details(self) -> List[Dict[str, Any]]:
         """

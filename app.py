@@ -169,7 +169,7 @@ def display_cache_management_ui():
                 try:
                     cleanup_date = datetime.datetime.fromisoformat(last_cleanup)
                     cleanup_display = cleanup_date.strftime("%m/%d %H:%M")
-                except:
+                except (ValueError, TypeError):
                     cleanup_display = last_cleanup
             else:
                 cleanup_display = last_cleanup
@@ -276,7 +276,7 @@ def display_cache_management_ui():
                                         created_time
                                     )
                                     time_display = created_dt.strftime("%m/%d %H:%M")
-                                except:
+                                except (ValueError, TypeError):
                                     time_display = created_time
                             else:
                                 time_display = created_time
@@ -463,7 +463,10 @@ def main():
         st.subheader("📂 保存先ディレクトリ")
 
         # デフォルトパスの提案
-        default_path = str(Path.home() / "Documents" / "Obsidian")
+        # default_path = str(Path.home() / "Documents" / "Obsidian")
+        default_path = (
+            "/mnt/d/hasechu/OneDrive/ドキュメント/Obsidian/hase_main/bookmarks"
+        )
 
         directory_path = st.text_input(
             "Obsidianファイルの保存先パスを入力してください",
@@ -567,7 +570,7 @@ def main():
                         def add_log(message):
                             logs.append(f"• {message}")
                             log_placeholder.text_area(
-                                "📝 処理ログ", "\\n".join(logs[-10:]), height=200
+                                "📝 処理ログ", "\n".join(logs[-10:]), height=200
                             )
 
                         # ステップ1: ブックマーク解析
@@ -710,6 +713,8 @@ def main():
 
                     # 解析結果の表示
                     if bookmarks:
+                        # セッション状態からparserを取得、または新しく作成
+                        parser = st.session_state.get("parser", BookmarkParser())
                         stats = parser.get_statistics(bookmarks)
 
                         # 統計情報の表示
@@ -961,15 +966,56 @@ def execute_optimized_bookmark_analysis(
 
         if cache_enabled:
             try:
-                bookmarks = cache_manager.load_from_cache(content)
-                if bookmarks:
+                cached_bookmarks = cache_manager.load_from_cache(content)
+                if cached_bookmarks:
                     cache_hit = True
                     add_log_func("✅ キャッシュヒット！既存の解析結果を使用します")
+
+                    # キャッシュされたブックマークにも重複除去を適用
+                    original_count = len(cached_bookmarks)
+                    add_log_func(
+                        f"🔍 デバッグ: キャッシュから読み込んだブックマーク数: {original_count}"
+                    )
+
+                    unique_bookmarks = []
+                    seen_urls = set()
+                    invalid_count = 0
+
+                    for i, bookmark in enumerate(cached_bookmarks):
+                        if not hasattr(bookmark, "title"):
+                            add_log_func(
+                                f"⚠️ 無効なブックマークオブジェクトをスキップ: {type(bookmark)}"
+                            )
+                            invalid_count += 1
+                            continue
+
+                        if bookmark.url not in seen_urls:
+                            unique_bookmarks.append(bookmark)
+                            seen_urls.add(bookmark.url)
+
+                        # 進捗表示（大量データの場合）
+                        if i > 0 and i % 1000 == 0:
+                            add_log_func(
+                                f"🔄 重複除去進捗: {i}/{original_count} 処理済み"
+                            )
+
+                    bookmarks = unique_bookmarks
+
+                    add_log_func(f"🔍 デバッグ: 無効オブジェクト数: {invalid_count}")
+                    add_log_func(
+                        f"🔍 デバッグ: 重複除去後のブックマーク数: {len(bookmarks)}"
+                    )
+
+                    if original_count != len(bookmarks):
+                        removed_count = original_count - len(bookmarks)
+                        add_log_func(
+                            f"🔄 キャッシュデータの重複除去: {original_count}件 → {len(bookmarks)}件 ({removed_count}件の重複を除去)"
+                        )
                 else:
                     add_log_func("❌ キャッシュミス。新規解析を実行します")
             except Exception as e:
                 error_logger.log_cache_error(
-                    cache_manager.get_cache_key(content), "read", str(e)
+                    cache_manager.calculate_file_hash(content), "read", str(e)
                 )
                 add_log_func(f"⚠️ キャッシュチェックエラー: {str(e)}")
 
@@ -987,7 +1033,7 @@ def execute_optimized_bookmark_analysis(
 
             # 進捗表示の初期化
             try:
-                progress_display.initialize("ブックマーク解析", len(content) // 1000)
+                progress_display.initialize_display(len(content) // 1000)
             except Exception as e:
                 error_logger.log_ui_display_error(
                     "progress_display", "initialization", str(e)
@@ -1008,7 +1054,28 @@ def execute_optimized_bookmark_analysis(
 
                 # 最適化された解析実行
                 def progress_callback(current, total, message=""):
-                    progress_display.update_progress(current, total, message)
+                    # 処理速度と統計情報を計算
+                    import time
+
+                    elapsed = time.time() - start_time
+                    # items_per_sec = current / elapsed if elapsed > 0 else 0  # 未使用のため削除
+
+                    # メモリ使用量を取得
+                    try:
+                        memory_usage = optimizer.monitor_memory_usage()
+                        memory_mb = memory_usage.get("current_mb", 0.0)
+                    except Exception:
+                        memory_mb = 0.0
+
+                    # 進捗表示を更新（統計情報を含む）
+                    progress_display.update_progress(
+                        completed=current,
+                        current_item=message,
+                        success_count=current,  # 簡易的に完了数を成功数とする
+                        error_count=0,  # エラー数は別途管理が必要
+                        memory_usage_mb=memory_mb,
+                    )
+
                     if message:
                         add_log_func(f"📊 {message}")
 
@@ -1019,6 +1086,33 @@ def execute_optimized_bookmark_analysis(
                     progress_callback=progress_callback,
                 )
 
+                # 重複除去処理
+                original_count = len(bookmarks)
+                unique_bookmarks = []
+                seen_urls = set()
+
+                for bookmark in bookmarks:
+                    # ブックマークの型チェック
+                    if not hasattr(bookmark, "title"):
+                        add_log_func(
+                            f"⚠️ 無効なブックマークオブジェクトをスキップ: {type(bookmark)}"
+                        )
+                        continue
+
+                    if bookmark.url not in seen_urls:
+                        unique_bookmarks.append(bookmark)
+                        seen_urls.add(bookmark.url)
+
+                bookmarks = unique_bookmarks
+
+                if original_count != len(bookmarks):
+                    add_log_func(
+                        f"🔄 重複除去: {original_count}件 → {len(bookmarks)}件 ({original_count - len(bookmarks)}件の重複を除去)"
+                    )
+
+                # parserをセッション状態に保存
+                st.session_state["parser"] = parser
+
                 # 解析結果をキャッシュに保存
                 if cache_enabled and bookmarks:
                     try:
@@ -1026,7 +1120,7 @@ def execute_optimized_bookmark_analysis(
                         add_log_func("💾 解析結果をキャッシュに保存しました")
                     except Exception as e:
                         error_logger.log_cache_error(
-                            cache_manager.get_cache_key(content), "write", str(e)
+                            cache_manager.calculate_file_hash(content), "write", str(e)
                         )
                         add_log_func(f"⚠️ キャッシュ保存エラー: {str(e)}")
 
@@ -1067,7 +1161,7 @@ def execute_optimized_bookmark_analysis(
                     )
                 else:
                     stats = {}
-                progress_display.complete()
+                progress_display.complete_progress("ブックマーク解析完了")
 
         parse_time = time.time() - start_time
 
