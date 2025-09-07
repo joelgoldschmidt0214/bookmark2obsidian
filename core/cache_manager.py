@@ -542,3 +542,89 @@ class CacheManager:
 
         except Exception as e:
             logger.error(f"メタデータ更新エラー: {e}")
+
+    def get_cached_result(self, file_content: str) -> Optional[List[Bookmark]]:
+        """
+        ファイル内容に対するキャッシュされた解析結果を取得
+
+        Args:
+            file_content: ファイル内容
+
+        Returns:
+            Optional[List[Bookmark]]: キャッシュされたブックマークリスト
+        """
+        try:
+            file_hash = self.calculate_file_hash(file_content)
+            return self.load_bookmark_cache(file_hash)
+        except Exception as e:
+            logger.error(f"キャッシュ結果取得エラー: {e}")
+            return None
+
+    def save_to_cache(self, file_content: str, bookmarks: List[Bookmark]) -> bool:
+        """
+        解析結果をキャッシュに保存
+
+        Args:
+            file_content: ファイル内容
+            bookmarks: ブックマークリスト
+
+        Returns:
+            bool: 保存成功かどうか
+        """
+        try:
+            file_hash = self.calculate_file_hash(file_content)
+            return self.save_bookmark_cache(file_hash, bookmarks)
+        except Exception as e:
+            logger.error(f"キャッシュ保存エラー: {e}")
+            return False
+
+    def get_cache_details(self) -> List[Dict[str, Any]]:
+        """
+        キャッシュの詳細情報を取得
+
+        Returns:
+            List[Dict[str, Any]]: キャッシュエントリの詳細リスト
+        """
+        try:
+            details = []
+
+            # ブックマークキャッシュの詳細
+            bookmark_cache = self._load_json(self.bookmark_cache_file, {})
+
+            for file_hash, entry in bookmark_cache.items():
+                try:
+                    timestamp = entry.get("timestamp", "Unknown")
+                    bookmark_count = len(entry.get("bookmarks", []))
+
+                    details.append(
+                        {
+                            "file_name": f"bookmark_{file_hash[:8]}.json",
+                            "type": "bookmark",
+                            "created_at": timestamp,
+                            "item_count": bookmark_count,
+                            "file_hash": file_hash,
+                        }
+                    )
+                except Exception:
+                    continue
+
+            # 作成日時でソート（新しい順）
+            details.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+            return details
+
+        except Exception as e:
+            logger.error(f"キャッシュ詳細取得エラー: {e}")
+            return []
+
+    def cleanup_old_cache(self, max_age_days: int = 7) -> int:
+        """
+        古いキャッシュエントリを削除
+
+        Args:
+            max_age_days: 最大保持日数
+
+        Returns:
+            int: 削除されたエントリ数
+        """
+        return self.cleanup_expired_cache(max_age_days)
