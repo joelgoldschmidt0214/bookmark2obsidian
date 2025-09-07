@@ -1,89 +1,89 @@
 # 実装計画
 
-- [ ] 1. プロジェクト構造の準備とディレクトリ作成
+- [x] 1. プロジェクト構造の準備とディレクトリ作成
   - 必要なディレクトリ構造（core/, ui/, utils/）を作成
   - 各ディレクトリに空の__init__.pyファイルを作成
   - _要件: 1.1, 1.2, 1.3_
 
-- [ ] 2. 共通データモデルの分離
-  - [ ] 2.1 データモデルファイルの作成と基本構造の実装
+- [x] 2. 共通データモデルの分離
+  - [x] 2.1 データモデルファイルの作成と基本構造の実装
     - utils/models.pyファイルを作成
     - 必要なインポート（Enum, dataclass, field, List, Dict, Optional, datetime）を追加
     - _要件: 2.1, 2.2_
   
-  - [ ] 2.2 データクラスの移動と実装
+  - [x] 2.2 データクラスの移動と実装
     - PageStatus(Enum)をutils/models.pyに移動
     - Bookmark(dataclass)をutils/models.pyに移動  
     - Page(dataclass)をutils/models.pyに移動
     - 各クラスに適切なdocstringを追加
     - _要件: 2.1, 8.1, 8.2_
 
-- [ ] 3. エラーハンドリングシステムの分離
-  - [ ] 3.1 エラーハンドラーファイルの作成
+- [x] 3. エラーハンドリングシステムの分離
+  - [x] 3.1 エラーハンドラーファイルの作成
     - utils/error_handler.pyファイルを作成
     - 必要なインポート（datetime, Dict, Any, List）を追加
     - Bookmarkモデルの相対インポートを追加（循環参照対策で文字列型ヒント使用）
     - _要件: 3.1, 3.3, 7.2_
   
-  - [ ] 3.2 ErrorLoggerクラスの移動と強化
+  - [x] 3.2 ErrorLoggerクラスの移動と強化
     - ErrorLoggerクラス全体をutils/error_handler.pyに移動
     - グローバルerror_loggerインスタンスを移動
     - ErrorLoggerクラスとlog_errorメソッドに包括的なdocstringを追加
     - _要件: 3.1, 3.2, 8.1, 8.2_
 
-- [ ] 4. ブックマーク解析機能の分離
-  - [ ] 4.1 パーサーファイルの作成と基本構造
+- [x] 4. ブックマーク解析機能の分離
+  - [x] 4.1 パーサーファイルの作成と基本構造
     - core/parser.pyファイルを作成
     - 必要なインポート（BeautifulSoup, re, datetime, Optional, List, Dict）を追加
     - データモデルの相対インポート（from ..utils.models import Bookmark）を追加
     - _要件: 4.1, 4.5, 7.2_
   
-  - [ ] 4.2 BookmarkParserクラスの移動と文書化
+  - [x] 4.2 BookmarkParserクラスの移動と文書化
     - BookmarkParserクラス全体をcore/parser.pyに移動
     - クラスとparse_bookmarks, extract_directory_structureメソッドにdocstringを追加
     - すべてのプライベートメソッドも含めて完全に移動
     - _要件: 4.1, 4.6, 8.1, 8.2, 9.1, 9.3_
 
-- [ ] 5. ファイル管理機能の分離
-  - [ ] 5.1 ファイルマネージャーファイルの作成
+- [x] 5. ファイル管理機能の分離
+  - [x] 5.1 ファイルマネージャーファイルの作成
     - core/file_manager.pyファイルを作成
     - 必要なインポート（Path, os, re, logging, Optional, List, Dict, Any）を追加
     - データモデルの相対インポート（from ..utils.models import Bookmark）を追加
     - _要件: 4.2, 4.5, 7.1_
   
-  - [ ] 5.2 LocalDirectoryManagerクラスの移動と文書化
+  - [x] 5.2 LocalDirectoryManagerクラスの移動と文書化
     - LocalDirectoryManagerクラス全体をcore/file_manager.pyに移動
     - クラスとscan_directory, check_file_exists, compare_with_bookmarks, save_markdown_fileメソッドにdocstringを追加
     - すべてのプライベートメソッドも含めて完全に移動
     - _要件: 4.2, 4.6, 8.1, 8.2, 9.1, 9.3_
 
-- [ ] 6. Webスクレイピング機能の分離
-  - [ ] 6.1 スクレイパーファイルの作成
+- [x] 6. Webスクレイピング機能の分離
+  - [x] 6.1 スクレイパーファイルの作成
     - core/scraper.pyファイルを作成
     - 必要なインポート（requests, BeautifulSoup, urlparse, RobotFileParser, time, logging, re, Optional, Dict, List, Any）を追加
     - _要件: 4.3, 4.5, 7.1_
   
-  - [ ] 6.2 WebScraperクラスの移動と文書化
+  - [x] 6.2 WebScraperクラスの移動と文書化
     - WebScraperクラス全体をcore/scraper.pyに移動
     - クラスとfetch_page_content, extract_article_contentメソッドにdocstringを追加
     - すべてのプライベートメソッドも含めて完全に移動
     - _要件: 4.3, 4.6, 8.1, 8.2, 9.1, 9.3_
 
-- [ ] 7. Markdown生成機能の分離
-  - [ ] 7.1 ジェネレーターファイルの作成
+- [x] 7. Markdown生成機能の分離
+  - [x] 7.1 ジェネレーターファイルの作成
     - core/generator.pyファイルを作成
     - 必要なインポート（logging, datetime, re, Path, Dict, List, Any）を追加
     - データモデルの相対インポート（from ..utils.models import Bookmark）を追加
     - _要件: 4.4, 4.5, 7.2_
   
-  - [ ] 7.2 MarkdownGeneratorクラスの移動と文書化
+  - [x] 7.2 MarkdownGeneratorクラスの移動と文書化
     - MarkdownGeneratorクラス全体をcore/generator.pyに移動
     - クラスとgenerate_obsidian_markdown, generate_file_pathメソッドにdocstringを追加
     - すべてのプライベートメソッドも含めて完全に移動
     - _要件: 4.4, 4.6, 8.1, 8.2, 9.1, 9.3_
 
 - [ ] 8. UIコンポーネントの分離
-  - [ ] 8.1 UIコンポーネントファイルの作成
+  - [x] 8.1 UIコンポーネントファイルの作成
     - ui/components.pyファイルを作成
     - 必要なStreamlitインポート（streamlit）を追加
     - 必要な標準ライブラリインポート（Path, os, BeautifulSoup, requests等）を追加
