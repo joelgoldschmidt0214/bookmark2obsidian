@@ -966,10 +966,51 @@ def execute_optimized_bookmark_analysis(
 
         if cache_enabled:
             try:
-                bookmarks = cache_manager.load_from_cache(content)
-                if bookmarks:
+                cached_bookmarks = cache_manager.load_from_cache(content)
+                if cached_bookmarks:
                     cache_hit = True
                     add_log_func("✅ キャッシュヒット！既存の解析結果を使用します")
+
+                    # キャッシュされたブックマークにも重複除去を適用
+                    original_count = len(cached_bookmarks)
+                    add_log_func(
+                        f"🔍 デバッグ: キャッシュから読み込んだブックマーク数: {original_count}"
+                    )
+
+                    unique_bookmarks = []
+                    seen_urls = set()
+                    invalid_count = 0
+
+                    for i, bookmark in enumerate(cached_bookmarks):
+                        if not hasattr(bookmark, "title"):
+                            add_log_func(
+                                f"⚠️ 無効なブックマークオブジェクトをスキップ: {type(bookmark)}"
+                            )
+                            invalid_count += 1
+                            continue
+
+                        if bookmark.url not in seen_urls:
+                            unique_bookmarks.append(bookmark)
+                            seen_urls.add(bookmark.url)
+
+                        # 進捗表示（大量データの場合）
+                        if i > 0 and i % 1000 == 0:
+                            add_log_func(
+                                f"🔄 重複除去進捗: {i}/{original_count} 処理済み"
+                            )
+
+                    bookmarks = unique_bookmarks
+
+                    add_log_func(f"🔍 デバッグ: 無効オブジェクト数: {invalid_count}")
+                    add_log_func(
+                        f"🔍 デバッグ: 重複除去後のブックマーク数: {len(bookmarks)}"
+                    )
+
+                    if original_count != len(bookmarks):
+                        removed_count = original_count - len(bookmarks)
+                        add_log_func(
+                            f"🔄 キャッシュデータの重複除去: {original_count}件 → {len(bookmarks)}件 ({removed_count}件の重複を除去)"
+                        )
                 else:
                     add_log_func("❌ キャッシュミス。新規解析を実行します")
             except Exception as e:
