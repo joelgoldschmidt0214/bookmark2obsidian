@@ -6,9 +6,7 @@
 
 import pytest
 import tempfile
-import os
-from unittest.mock import Mock, patch, MagicMock
-from typing import List, Dict, Any
+from unittest.mock import patch, MagicMock
 
 # テスト対象のモジュールをインポート
 from core.parser import BookmarkParser
@@ -16,8 +14,8 @@ from core.cache_manager import CacheManager
 from utils.cache_utils import get_cache_statistics, clear_all_cache
 from utils.error_handler import error_logger, error_recovery, ErrorRecoveryStrategy
 from ui.progress_display import ProgressDisplay
-from ui.components import display_page_list_and_preview, display_bookmark_list_only
-from utils.models import Bookmark, CacheEntry
+from ui.components import display_bookmark_list_only
+from utils.models import Bookmark
 
 
 class TestCacheFunctionality:
@@ -249,7 +247,7 @@ class TestErrorHandling:
         try:
             bookmarks = self.parser.parse_bookmarks(malformed_html)
             parsing_success = True
-        except Exception as e:
+        except Exception:
             # エラー回復戦略を実行
             recovery_result = error_recovery.execute_recovery_action(
                 "extraction", {"html_content": malformed_html}

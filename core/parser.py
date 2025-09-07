@@ -129,7 +129,7 @@ class BookmarkParser:
 
         # DLエレメント内のDTを処理（Pタグ内にある場合も考慮）
         # まず、このDLレベルのDTエレメントを取得
-        all_dt_in_dl = dl_element.find_all("dt")
+        # all_dt_in_dl = dl_element.find_all("dt")  # 未使用のため削除
 
         # このDLの直接の子DTエレメントのみを取得（pタグ内も含む）
         direct_dt_elements = []

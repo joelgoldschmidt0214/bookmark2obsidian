@@ -13,8 +13,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 # 作成したモジュールからのインポート
-from utils.models import Bookmark, Page, PageStatus
-from utils.error_handler import error_logger
+from utils.models import Bookmark
 from core.file_manager import LocalDirectoryManager
 from core.scraper import WebScraper
 from core.generator import MarkdownGenerator
@@ -137,6 +136,13 @@ def handle_edge_cases_and_errors(bookmarks: List[Bookmark]) -> Dict[str, Any]:
     logger.info(f"🔍 エッジケース分析開始: {len(bookmarks)}個のブックマーク")
 
     for bookmark in bookmarks:
+        # ブックマークの型チェック
+        if not hasattr(bookmark, "title"):
+            logger.error(
+                f"統計計算で無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
+            )
+            continue
+
         # URL形式の検証
         if not _is_valid_url_format(bookmark.url):
             result["problematic_urls"].append(
@@ -410,7 +416,10 @@ def _display_bookmark_statistics(bookmarks: List[Bookmark], duplicates: Dict):
             st.metric("総ブックマーク数", len(bookmarks))
 
         with col2:
-            duplicate_count = len(duplicates.get("files", []))
+            duplicate_files = (
+                duplicates.get("files", []) if isinstance(duplicates, dict) else []
+            )
+            duplicate_count = len(duplicate_files)
             st.metric("重複ファイル", duplicate_count)
 
         with col3:
@@ -421,6 +430,10 @@ def _display_bookmark_statistics(bookmarks: List[Bookmark], duplicates: Dict):
             # フォルダ数の計算
             folders = set()
             for bookmark in bookmarks:
+                # ブックマークの型チェック
+                if not hasattr(bookmark, "title"):
+                    continue
+
                 if bookmark.folder_path:
                     folders.add(tuple(bookmark.folder_path))
             st.metric("フォルダ数", len(folders))
@@ -523,6 +536,13 @@ def organize_bookmarks_by_folder(
     folder_groups = {}
 
     for bookmark in bookmarks:
+        # ブックマークの型チェック
+        if not hasattr(bookmark, "title"):
+            logger.error(
+                f"無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
+            )
+            continue
+
         # フォルダパスをタプルに変換（辞書のキーとして使用）
         folder_key = tuple(bookmark.folder_path) if bookmark.folder_path else tuple()
 
@@ -732,11 +752,14 @@ def _apply_bookmark_filters(
 
         # 重複フィルター
         if not filters.get("show_duplicates", True):
-            duplicate_urls = {dup.get("url", "") for dup in duplicates.get("files", [])}
+            duplicate_files = (
+                duplicates.get("files", []) if isinstance(duplicates, dict) else []
+            )
+            duplicate_paths = set(duplicate_files)
             filtered_bookmarks = [
                 bookmark
                 for bookmark in filtered_bookmarks
-                if bookmark.url not in duplicate_urls
+                if not _is_bookmark_duplicate(bookmark, duplicate_paths)
             ]
 
         return filtered_bookmarks
@@ -810,15 +833,60 @@ def _apply_pagination(bookmarks: List[Bookmark]) -> List[Bookmark]:
         return bookmarks[:20]  # フォールバック
 
 
+def _is_bookmark_duplicate(bookmark: Bookmark, duplicate_paths: set) -> bool:
+    """ブックマークが重複しているかチェック"""
+    folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
+    filename = _sanitize_filename_for_check(bookmark.title, folder_path)
+    file_path = f"{folder_path}/{filename}" if folder_path else filename
+    return file_path in duplicate_paths
+
+
+def _sanitize_filename_for_check(title: str, folder_path: str = "") -> str:
+    """ファイル名のサニタイズ（file_managerと同じロジック）"""
+    import re
+
+    # 危険な文字を除去・置換
+    filename = re.sub(r'[<>:"/\\|?*]', "_", title)
+    filename = re.sub(r"_+", "_", filename)
+    filename = filename.strip(" _")
+
+    if not filename:
+        filename = "untitled"
+
+    # 長さ制限
+    if len(filename) > 100:
+        filename = filename[:97] + "..."
+
+    return filename
+
+
 def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
     """ブックマークアイテムを表示"""
     try:
-        duplicate_urls = {dup.get("url", "") for dup in duplicates.get("files", [])}
+        # duplicatesの構造を確認してから処理
+        duplicate_files = (
+            duplicates.get("files", []) if isinstance(duplicates, dict) else []
+        )
+        # duplicate_filesは文字列のリストなので、URLではなくファイルパスとして扱う
+        duplicate_paths = set(duplicate_files)
         selected_bookmarks = st.session_state.get("selected_bookmarks", [])
 
         for i, bookmark in enumerate(bookmarks):
-            # 重複チェック
-            is_duplicate = bookmark.url in duplicate_urls
+            # デバッグ: ブックマークの型をチェック
+            if not hasattr(bookmark, "title"):
+                st.error(
+                    f"❌ 無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
+                )
+                logger.error(
+                    f"無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
+                )
+                continue
+            # 重複チェック（ファイルパスベース）
+            folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
+            # ファイル名を生成（file_managerと同じロジック）
+            filename = _sanitize_filename_for_check(bookmark.title, folder_path)
+            file_path = f"{folder_path}/{filename}" if folder_path else filename
+            is_duplicate = file_path in duplicate_paths
 
             # 選択状態チェック
             is_selected = any(b.url == bookmark.url for b in selected_bookmarks)
@@ -830,9 +898,10 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
                 with col1:
                     # 選択チェックボックス
                     selected = st.checkbox(
-                        "",
+                        "選択",
                         value=is_selected,
                         key=f"bookmark_select_{i}_{bookmark.url[:20]}",
+                        label_visibility="collapsed",
                     )
 
                     # 選択状態の更新
@@ -939,7 +1008,10 @@ def display_bookmark_structure_tree(
 
     # 統計情報の計算
     total_files = sum(len(files) for files in directory_structure.values())
-    duplicate_files = len(duplicates.get("files", []))
+    duplicate_files_list = (
+        duplicates.get("files", []) if isinstance(duplicates, dict) else []
+    )
+    duplicate_files = len(duplicate_files_list)
 
     # 統計表示
     col1, col2, col3 = st.columns(3)
@@ -958,6 +1030,11 @@ def show_page_preview(bookmark: Bookmark, index: int):
     st.subheader(f"🔍 プレビュー: {bookmark.title}")
 
     # 基本情報の表示
+    # ブックマークの型チェック
+    if not hasattr(bookmark, "title"):
+        st.error(f"❌ 無効なブックマークオブジェクト: {type(bookmark)}")
+        return
+
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -990,7 +1067,7 @@ def save_selected_pages_enhanced(
         # 初期化
         scraper = WebScraper()
         generator = MarkdownGenerator()
-        directory_manager = LocalDirectoryManager(output_directory)
+        # directory_manager = LocalDirectoryManager(output_directory)  # 未使用のため削除
 
         # 進捗表示の準備
         progress_bar = st.progress(0)

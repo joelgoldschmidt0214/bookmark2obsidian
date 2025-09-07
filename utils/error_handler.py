@@ -6,7 +6,7 @@
 """
 
 import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import logging
 
 # ロガーの取得

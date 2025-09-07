@@ -6,7 +6,6 @@ pytest設定ファイル
 import pytest
 import tempfile
 import shutil
-import os
 from unittest.mock import Mock
 
 

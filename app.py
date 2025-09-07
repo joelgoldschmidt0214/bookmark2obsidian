@@ -169,7 +169,7 @@ def display_cache_management_ui():
                 try:
                     cleanup_date = datetime.datetime.fromisoformat(last_cleanup)
                     cleanup_display = cleanup_date.strftime("%m/%d %H:%M")
-                except:
+                except (ValueError, TypeError):
                     cleanup_display = last_cleanup
             else:
                 cleanup_display = last_cleanup
@@ -276,7 +276,7 @@ def display_cache_management_ui():
                                         created_time
                                     )
                                     time_display = created_dt.strftime("%m/%d %H:%M")
-                                except:
+                                except (ValueError, TypeError):
                                     time_display = created_time
                             else:
                                 time_display = created_time
@@ -463,7 +463,10 @@ def main():
         st.subheader("📂 保存先ディレクトリ")
 
         # デフォルトパスの提案
-        default_path = str(Path.home() / "Documents" / "Obsidian")
+        # default_path = str(Path.home() / "Documents" / "Obsidian")
+        default_path = (
+            "/mnt/d/hasechu/OneDrive/ドキュメント/Obsidian/hase_main/bookmarks"
+        )
 
         directory_path = st.text_input(
             "Obsidianファイルの保存先パスを入力してください",
@@ -1014,13 +1017,13 @@ def execute_optimized_bookmark_analysis(
                     import time
 
                     elapsed = time.time() - start_time
-                    items_per_sec = current / elapsed if elapsed > 0 else 0
+                    # items_per_sec = current / elapsed if elapsed > 0 else 0  # 未使用のため削除
 
                     # メモリ使用量を取得
                     try:
                         memory_usage = optimizer.monitor_memory_usage()
                         memory_mb = memory_usage.get("current_mb", 0.0)
-                    except:
+                    except Exception:
                         memory_mb = 0.0
 
                     # 進捗表示を更新（統計情報を含む）
@@ -1041,6 +1044,30 @@ def execute_optimized_bookmark_analysis(
                     use_parallel=use_parallel,
                     progress_callback=progress_callback,
                 )
+
+                # 重複除去処理
+                original_count = len(bookmarks)
+                unique_bookmarks = []
+                seen_urls = set()
+
+                for bookmark in bookmarks:
+                    # ブックマークの型チェック
+                    if not hasattr(bookmark, "title"):
+                        add_log_func(
+                            f"⚠️ 無効なブックマークオブジェクトをスキップ: {type(bookmark)}"
+                        )
+                        continue
+
+                    if bookmark.url not in seen_urls:
+                        unique_bookmarks.append(bookmark)
+                        seen_urls.add(bookmark.url)
+
+                bookmarks = unique_bookmarks
+
+                if original_count != len(bookmarks):
+                    add_log_func(
+                        f"🔄 重複除去: {original_count}件 → {len(bookmarks)}件 ({original_count - len(bookmarks)}件の重複を除去)"
+                    )
 
                 # parserをセッション状態に保存
                 st.session_state["parser"] = parser

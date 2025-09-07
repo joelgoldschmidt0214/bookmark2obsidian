@@ -6,11 +6,11 @@
 """
 
 import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 import logging
 
-from .models import CacheEntry, CacheMetadata, CacheStatistics, Bookmark
+from .models import CacheEntry, CacheStatistics, Bookmark
 
 logger = logging.getLogger(__name__)
 

@@ -222,45 +222,73 @@ class ProgressDisplay:
     def _update_ui_elements(self) -> None:
         """UIエレメントを更新"""
         try:
+            # UIエレメントの存在確認
+            if not self._ui_elements:
+                logger.warning("UIエレメントが初期化されていません")
+                return
+
             # デバッグログ
             logger.debug(
                 f"UI更新: 完了={self.stats.completed_items}, 処理速度={self.stats.items_per_second:.1f}"
             )
 
             # 進捗バーの更新
-            progress_value = self.stats.completion_rate / 100
-            self._ui_elements["progress_bar"].progress(progress_value)
+            if (
+                "progress_bar" in self._ui_elements
+                and self._ui_elements["progress_bar"]
+            ):
+                progress_value = self.stats.completion_rate / 100
+                self._ui_elements["progress_bar"].progress(progress_value)
 
             # ステータステキストの更新
-            status_text = f"📄 処理中: {self.stats.current_item[:50]}... ({self.stats.completed_items}/{self.stats.total_items})"
-            self._ui_elements["status_text"].text(status_text)
+            if "status_text" in self._ui_elements and self._ui_elements["status_text"]:
+                status_text = f"📄 処理中: {self.stats.current_item[:50]}... ({self.stats.completed_items}/{self.stats.total_items})"
+                self._ui_elements["status_text"].text(status_text)
 
             # メトリクスの更新（強制的に新しい値で更新）
-            self._ui_elements["completed_metric"].metric(
-                "完了",
-                f"{self.stats.completed_items}/{self.stats.total_items}",
-                delta=f"{self.stats.completion_rate:.1f}%",
-            )
+            if (
+                "completed_metric" in self._ui_elements
+                and self._ui_elements["completed_metric"]
+            ):
+                self._ui_elements["completed_metric"].metric(
+                    "完了",
+                    f"{self.stats.completed_items}/{self.stats.total_items}",
+                    delta=f"{self.stats.completion_rate:.1f}%",
+                )
 
-            self._ui_elements["success_metric"].metric(
-                "成功",
-                str(self.stats.success_count),
-                delta=f"{self.stats.success_rate:.1f}%",
-            )
+            if (
+                "success_metric" in self._ui_elements
+                and self._ui_elements["success_metric"]
+            ):
+                self._ui_elements["success_metric"].metric(
+                    "成功",
+                    str(self.stats.success_count),
+                    delta=f"{self.stats.success_rate:.1f}%",
+                )
 
-            self._ui_elements["error_metric"].metric(
-                "エラー", str(self.stats.error_count)
-            )
+            if (
+                "error_metric" in self._ui_elements
+                and self._ui_elements["error_metric"]
+            ):
+                self._ui_elements["error_metric"].metric(
+                    "エラー", str(self.stats.error_count)
+                )
 
             # 処理速度の表示（0の場合も明示的に表示）
-            rate_text = f"{self.stats.items_per_second:.1f} items/sec"
-            self._ui_elements["rate_metric"].metric("処理速度", rate_text)
+            if "rate_metric" in self._ui_elements and self._ui_elements["rate_metric"]:
+                rate_text = f"{self.stats.items_per_second:.1f} items/sec"
+                self._ui_elements["rate_metric"].metric("処理速度", rate_text)
 
             # パフォーマンス統計の更新
-            elapsed_str = str(timedelta(seconds=int(self.stats.elapsed_time)))
-            self._ui_elements["time_metric"].metric("経過時間", elapsed_str)
+            if "time_metric" in self._ui_elements and self._ui_elements["time_metric"]:
+                elapsed_str = str(timedelta(seconds=int(self.stats.elapsed_time)))
+                self._ui_elements["time_metric"].metric("経過時間", elapsed_str)
 
-            if self.stats.estimated_remaining_time > 0:
+            if (
+                self.stats.estimated_remaining_time > 0
+                and "remaining_metric" in self._ui_elements
+                and self._ui_elements["remaining_metric"]
+            ):
                 remaining_str = str(
                     timedelta(seconds=int(self.stats.estimated_remaining_time))
                 )
@@ -268,64 +296,89 @@ class ProgressDisplay:
                     "推定残り時間", remaining_str
                 )
 
-            self._ui_elements["memory_metric"].metric(
-                "メモリ使用量", f"{self.stats.memory_usage_mb:.1f} MB"
-            )
+            if (
+                "memory_metric" in self._ui_elements
+                and self._ui_elements["memory_metric"]
+            ):
+                self._ui_elements["memory_metric"].metric(
+                    "メモリ使用量", f"{self.stats.memory_usage_mb:.1f} MB"
+                )
 
-            self._ui_elements["cache_hit_metric"].metric(
-                "キャッシュヒット率", f"{self.stats.cache_hit_rate:.1f}%"
-            )
+            if (
+                "cache_hit_metric" in self._ui_elements
+                and self._ui_elements["cache_hit_metric"]
+            ):
+                self._ui_elements["cache_hit_metric"].metric(
+                    "キャッシュヒット率", f"{self.stats.cache_hit_rate:.1f}%"
+                )
 
-            self._ui_elements["success_rate_metric"].metric(
-                "成功率", f"{self.stats.success_rate:.1f}%"
-            )
+            if (
+                "success_rate_metric" in self._ui_elements
+                and self._ui_elements["success_rate_metric"]
+            ):
+                self._ui_elements["success_rate_metric"].metric(
+                    "成功率", f"{self.stats.success_rate:.1f}%"
+                )
 
             # 詳細情報の更新
-            self._update_details_section()
+            if (
+                "details_expander" in self._ui_elements
+                and self._ui_elements["details_expander"]
+            ):
+                self._update_details_section()
 
         except Exception as e:
             logger.error(f"UI更新エラー: {e}")
 
     def _update_details_section(self) -> None:
         """詳細情報セクションを更新"""
-        with self._ui_elements["details_expander"]:
-            # 処理統計
-            st.markdown("#### 📊 処理統計")
+        try:
+            if (
+                "details_expander" not in self._ui_elements
+                or not self._ui_elements["details_expander"]
+            ):
+                return
 
-            col1, col2 = st.columns(2)
+            with self._ui_elements["details_expander"]:
+                # 処理統計
+                st.markdown("#### 📊 処理統計")
 
-            with col1:
-                st.markdown(f"""
-                - **総アイテム数**: {self.stats.total_items}
-                - **完了数**: {self.stats.completed_items}
-                - **成功数**: {self.stats.success_count}
-                - **エラー数**: {self.stats.error_count}
-                """)
+                col1, col2 = st.columns(2)
 
-            with col2:
-                st.markdown(f"""
-                - **完了率**: {self.stats.completion_rate:.1f}%
-                - **成功率**: {self.stats.success_rate:.1f}%
-                - **処理速度**: {self.stats.items_per_second:.1f} items/sec
-                - **キャッシュヒット率**: {self.stats.cache_hit_rate:.1f}%
-                """)
+                with col1:
+                    st.markdown(f"""
+                    - **総アイテム数**: {self.stats.total_items}
+                    - **完了数**: {self.stats.completed_items}
+                    - **成功数**: {self.stats.success_count}
+                    - **エラー数**: {self.stats.error_count}
+                    """)
 
-            # エラー詳細（エラーがある場合のみ）
-            if self.stats.error_details:
-                st.markdown("#### ❌ エラー詳細")
+                with col2:
+                    st.markdown(f"""
+                    - **完了率**: {self.stats.completion_rate:.1f}%
+                    - **成功率**: {self.stats.success_rate:.1f}%
+                    - **処理速度**: {self.stats.items_per_second:.1f} items/sec
+                    - **キャッシュヒット率**: {self.stats.cache_hit_rate:.1f}%
+                    """)
 
-                # 最新の5件のエラーを表示
-                recent_errors = self.stats.error_details[-5:]
+                # エラー詳細（エラーがある場合のみ）
+                if self.stats.error_details:
+                    st.markdown("#### ❌ エラー詳細")
 
-                for error in recent_errors:
-                    st.error(
-                        f"**{error['timestamp']}** - {error['item']}: {error['error']}"
-                    )
+                    # 最新の5件のエラーを表示
+                    recent_errors = self.stats.error_details[-5:]
 
-                if len(self.stats.error_details) > 5:
-                    st.info(
-                        f"他に{len(self.stats.error_details) - 5}件のエラーがあります"
-                    )
+                    for error in recent_errors:
+                        st.error(
+                            f"**{error['timestamp']}** - {error['item']}: {error['error']}"
+                        )
+
+                    if len(self.stats.error_details) > 5:
+                        st.info(
+                            f"他に{len(self.stats.error_details) - 5}件のエラーがあります"
+                        )
+        except Exception as e:
+            logger.error(f"詳細セクション更新エラー: {e}")
 
     def complete_progress(self, final_message: str = "処理完了") -> None:
         """

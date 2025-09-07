@@ -7,17 +7,12 @@
 import pytest
 import time
 import tempfile
-import os
-from typing import List, Dict, Any
-from unittest.mock import Mock, patch
 
 # テスト対象のモジュールをインポート
 from core.parser import BookmarkParser
 from core.cache_manager import CacheManager
 from utils.performance_utils import PerformanceOptimizer
-from utils.error_handler import error_logger, error_recovery
 from ui.progress_display import ProgressDisplay
-from utils.models import Bookmark
 
 
 class TestRealWorldScenarios:

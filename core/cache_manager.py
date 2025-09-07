@@ -8,14 +8,12 @@
 
 import json
 import hashlib
-import os
-import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import datetime
 import logging
 
-from utils.models import Bookmark, CacheEntry
+from utils.models import Bookmark
 
 logger = logging.getLogger(__name__)
 
