@@ -128,15 +128,25 @@ class LocalDirectoryManager:
 
             # 実際のファイルシステムからも確認
             full_path = self.base_path / path if path else self.base_path
+
+            # パス長制限チェック（Windows対応）
+            md_file_path = full_path / f"{filename}.md"
+            markdown_file_path = full_path / f"{filename}.markdown"
+
+            # パス長が制限を超える場合はエラーログを出力して False を返す
+            if len(str(md_file_path)) > 250 or len(str(markdown_file_path)) > 250:
+                logger.warning(
+                    f"    パス長制限超過: {len(str(md_file_path))}文字 - {md_file_path}"
+                )
+                return False
+
             if full_path.exists():
-                md_file = full_path / f"{filename}.md"
-                markdown_file = full_path / f"{filename}.markdown"
-                file_exists = md_file.exists() or markdown_file.exists()
+                file_exists = md_file_path.exists() or markdown_file_path.exists()
                 logger.debug(
-                    f"    ファイルシステムチェック: {md_file} → {md_file.exists()}"
+                    f"    ファイルシステムチェック: {md_file_path} → {md_file_path.exists()}"
                 )
                 logger.debug(
-                    f"    ファイルシステムチェック: {markdown_file} → {markdown_file.exists()}"
+                    f"    ファイルシステムチェック: {markdown_file_path} → {markdown_file_path.exists()}"
                 )
                 return file_exists
 
@@ -176,7 +186,7 @@ class LocalDirectoryManager:
             folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
 
             # ファイル名を生成（BookmarkParserと同じロジック）
-            filename = self._sanitize_filename(bookmark.title)
+            filename = self._sanitize_filename(bookmark.title, folder_path)
 
             logger.debug(
                 f"  {i + 1}. チェック中: '{bookmark.title}' → '{filename}' (パス: '{folder_path}')"
@@ -243,7 +253,7 @@ class LocalDirectoryManager:
             bool: 重複ファイルの場合True
         """
         folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
-        filename = self._sanitize_filename(bookmark.title)
+        filename = self._sanitize_filename(bookmark.title, folder_path)
 
         return (folder_path, filename) in self.duplicate_files
 
@@ -434,12 +444,13 @@ class LocalDirectoryManager:
             logger.error(f"❌ ディレクトリ権限エラー: {str(e)}")
             raise
 
-    def _sanitize_filename(self, title: str) -> str:
+    def _sanitize_filename(self, title: str, folder_path: str = "") -> str:
         """
-        タイトルから安全なファイル名を生成（BookmarkParserと同じロジック）
+        タイトルから安全なファイル名を生成（パス長制限を考慮）
 
         Args:
             title: 元のタイトル
+            folder_path: フォルダパス（パス長計算用）
 
         Returns:
             str: 安全なファイル名
@@ -457,9 +468,25 @@ class LocalDirectoryManager:
         if not filename:
             filename = "untitled"
 
-        # 長すぎる場合は切り詰め（拡張子を考慮して200文字以内）
-        if len(filename) > 200:
-            filename = filename[:200]
+        # パス長制限を考慮した動的な長さ制限
+        base_path_len = len(str(self.base_path))
+        folder_path_len = len(folder_path)
+        extension_len = 9  # ".markdown" の長さ
+
+        # 安全マージンを含めて計算（Windows制限260文字 - 安全マージン10文字）
+        max_total_len = 250
+        available_len = (
+            max_total_len - base_path_len - folder_path_len - extension_len - 2
+        )  # パス区切り文字分
+
+        # 最小限の長さを保証（20文字以上）
+        max_filename_len = max(20, min(100, available_len))
+
+        if len(filename) > max_filename_len:
+            filename = filename[:max_filename_len]
+            # 切り詰めた場合は末尾に識別子を追加
+            if max_filename_len > 10:
+                filename = filename[:-3] + "..."
 
         return filename
 
