@@ -969,7 +969,7 @@ def execute_optimized_bookmark_analysis(
                     add_log_func("❌ キャッシュミス。新規解析を実行します")
             except Exception as e:
                 error_logger.log_cache_error(
-                    cache_manager.get_cache_key(content), "read", str(e)
+                    cache_manager.calculate_file_hash(content), "read", str(e)
                 )
                 add_log_func(f"⚠️ キャッシュチェックエラー: {str(e)}")
 
@@ -1026,7 +1026,7 @@ def execute_optimized_bookmark_analysis(
                         add_log_func("💾 解析結果をキャッシュに保存しました")
                     except Exception as e:
                         error_logger.log_cache_error(
-                            cache_manager.get_cache_key(content), "write", str(e)
+                            cache_manager.calculate_file_hash(content), "write", str(e)
                         )
                         add_log_func(f"⚠️ キャッシュ保存エラー: {str(e)}")
 
