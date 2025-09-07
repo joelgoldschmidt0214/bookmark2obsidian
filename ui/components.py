@@ -10,6 +10,7 @@ import logging
 import time
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
+from datetime import datetime
 
 # 作成したモジュールからのインポート
 from utils.models import Bookmark, Page, PageStatus
@@ -273,25 +274,246 @@ def show_application_info():
 def display_page_list_and_preview(
     bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path
 ):
-    """ページ一覧表示とプレビュー機能"""
-    st.subheader("📋 ブックマーク一覧とプレビュー")
+    """
+    改善されたページ一覧表示とプレビュー機能
 
-    if not bookmarks:
-        st.warning("表示するブックマークがありません。")
-        return
+    要件:
+    - エラーハンドリング付きの結果表示機能
+    - セッション状態管理の改善
+    - 表示エラー時の適切なメッセージ表示
+    """
+    try:
+        st.subheader("📋 ブックマーク一覧とプレビュー")
 
-    # フォルダ別に整理
-    folder_groups = organize_bookmarks_by_folder(bookmarks)
+        # 入力データの検証
+        if not _validate_display_inputs(bookmarks, duplicates, output_directory):
+            return
 
-    # 表示モード選択
-    display_mode = st.radio(
-        "表示モード", ["📁 フォルダ別表示", "📄 一覧表示"], horizontal=True
-    )
+        # セッション状態の初期化と管理
+        _initialize_session_state()
 
-    if display_mode == "📁 フォルダ別表示":
-        display_bookmark_tree(bookmarks, folder_groups, duplicates)
-    else:
-        display_bookmark_list_only(bookmarks, duplicates)
+        # 統計情報の表示
+        _display_bookmark_statistics(bookmarks, duplicates)
+
+        # フォルダ別に整理（エラーハンドリング付き）
+        try:
+            folder_groups = organize_bookmarks_by_folder(bookmarks)
+        except Exception as e:
+            st.error(f"❌ フォルダ整理中にエラーが発生しました: {str(e)}")
+            logger.error(f"フォルダ整理エラー: {e}")
+            return
+
+        # 表示モード選択
+        display_mode = st.radio(
+            "表示モード",
+            ["📁 フォルダ別表示", "📄 一覧表示"],
+            horizontal=True,
+            key="display_mode_selection",
+        )
+
+        # 表示モードに応じた処理（エラーハンドリング付き）
+        try:
+            if display_mode == "📁 フォルダ別表示":
+                display_bookmark_tree(bookmarks, folder_groups, duplicates)
+            else:
+                display_bookmark_list_only(bookmarks, duplicates)
+        except Exception as e:
+            st.error(f"❌ ブックマーク表示中にエラーが発生しました: {str(e)}")
+            logger.error(f"ブックマーク表示エラー: {e}")
+
+            # フォールバック表示
+            _display_fallback_bookmark_list(bookmarks)
+
+        # 選択状態の表示と管理
+        _display_selection_summary()
+
+    except Exception as e:
+        st.error(f"❌ 予期しないエラーが発生しました: {str(e)}")
+        logger.error(f"display_page_list_and_preview エラー: {e}")
+
+        # 緊急時のフォールバック
+        _display_emergency_fallback()
+
+
+def _validate_display_inputs(
+    bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path
+) -> bool:
+    """表示機能の入力データを検証"""
+    try:
+        # ブックマークリストの検証
+        if not bookmarks:
+            st.warning("📝 表示するブックマークがありません。")
+            st.info("💡 ブックマークファイルをアップロードして解析を実行してください。")
+            return False
+
+        if not isinstance(bookmarks, list):
+            st.error("❌ ブックマークデータの形式が正しくありません。")
+            logger.error(f"無効なブックマークデータ型: {type(bookmarks)}")
+            return False
+
+        # 重複データの検証
+        if duplicates is None:
+            st.warning("⚠️ 重複チェックデータがありません。")
+            duplicates = {"files": [], "urls": []}
+
+        # 出力ディレクトリの検証
+        if not output_directory or not isinstance(output_directory, Path):
+            st.error("❌ 出力ディレクトリが正しく設定されていません。")
+            return False
+
+        return True
+
+    except Exception as e:
+        st.error(f"❌ 入力データ検証中にエラーが発生しました: {str(e)}")
+        logger.error(f"入力データ検証エラー: {e}")
+        return False
+
+
+def _initialize_session_state():
+    """セッション状態の初期化と管理を改善"""
+    try:
+        # 選択されたブックマークの初期化
+        if "selected_bookmarks" not in st.session_state:
+            st.session_state.selected_bookmarks = []
+
+        # 表示設定の初期化
+        if "display_settings" not in st.session_state:
+            st.session_state.display_settings = {
+                "show_duplicates": True,
+                "show_statistics": True,
+                "items_per_page": 20,
+                "sort_order": "folder",
+            }
+
+        # エラー状態の初期化
+        if "display_errors" not in st.session_state:
+            st.session_state.display_errors = []
+
+        # 最後の更新時刻を記録
+        st.session_state.last_display_update = datetime.now()
+
+    except Exception as e:
+        logger.error(f"セッション状態初期化エラー: {e}")
+
+
+def _display_bookmark_statistics(bookmarks: List[Bookmark], duplicates: Dict):
+    """ブックマーク統計情報の表示"""
+    try:
+        if not st.session_state.display_settings.get("show_statistics", True):
+            return
+
+        st.markdown("#### 📊 ブックマーク統計")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("総ブックマーク数", len(bookmarks))
+
+        with col2:
+            duplicate_count = len(duplicates.get("files", []))
+            st.metric("重複ファイル", duplicate_count)
+
+        with col3:
+            selected_count = len(st.session_state.get("selected_bookmarks", []))
+            st.metric("選択中", selected_count)
+
+        with col4:
+            # フォルダ数の計算
+            folders = set()
+            for bookmark in bookmarks:
+                if bookmark.folder_path:
+                    folders.add(tuple(bookmark.folder_path))
+            st.metric("フォルダ数", len(folders))
+
+    except Exception as e:
+        st.warning(f"⚠️ 統計情報の表示中にエラーが発生しました: {str(e)}")
+        logger.error(f"統計情報表示エラー: {e}")
+
+
+def _display_selection_summary():
+    """選択状態のサマリー表示"""
+    try:
+        selected_bookmarks = st.session_state.get("selected_bookmarks", [])
+
+        if selected_bookmarks:
+            st.markdown("---")
+            st.markdown("### 📋 選択サマリー")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.info(
+                    f"✅ {len(selected_bookmarks)}個のブックマークが選択されています"
+                )
+
+            with col2:
+                if st.button("🗑️ 選択をクリア", key="clear_selection"):
+                    st.session_state.selected_bookmarks = []
+                    st.rerun()
+
+    except Exception as e:
+        logger.error(f"選択サマリー表示エラー: {e}")
+
+
+def _display_fallback_bookmark_list(bookmarks: List[Bookmark]):
+    """フォールバック用のシンプルなブックマーク一覧表示"""
+    try:
+        st.markdown("### 📄 シンプル表示モード")
+        st.info(
+            "⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。"
+        )
+
+        # ページネーション
+        items_per_page = 10
+        total_pages = (len(bookmarks) + items_per_page - 1) // items_per_page
+
+        if total_pages > 1:
+            page = st.selectbox(
+                "ページ", range(1, total_pages + 1), key="fallback_page"
+            )
+            start_idx = (page - 1) * items_per_page
+            end_idx = min(start_idx + items_per_page, len(bookmarks))
+            page_bookmarks = bookmarks[start_idx:end_idx]
+        else:
+            page_bookmarks = bookmarks
+
+        # シンプルなリスト表示
+        for i, bookmark in enumerate(page_bookmarks):
+            with st.expander(f"📄 {bookmark.title[:50]}..."):
+                st.markdown(f"**URL:** [{bookmark.url}]({bookmark.url})")
+                if bookmark.folder_path:
+                    st.markdown(f"**フォルダ:** {' > '.join(bookmark.folder_path)}")
+
+    except Exception as e:
+        st.error(f"❌ フォールバック表示でもエラーが発生しました: {str(e)}")
+        logger.error(f"フォールバック表示エラー: {e}")
+
+
+def _display_emergency_fallback():
+    """緊急時のフォールバック表示"""
+    st.error("❌ 重大なエラーが発生しました")
+    st.markdown("""
+    ### 🚨 緊急時の対処方法
+    
+    1. **ページを再読み込み**してください
+    2. **ブラウザのキャッシュをクリア**してください
+    3. **ブックマークファイルを再アップロード**してください
+    4. 問題が続く場合は、**より小さなブックマークファイル**で試してください
+    
+    ### 📞 サポート情報
+    - エラーの詳細はブラウザの開発者ツールで確認できます
+    - ログファイルも確認してください
+    """)
+
+    # セッション状態のリセットオプション
+    if st.button("🔄 セッション状態をリセット", key="emergency_reset"):
+        for key in list(st.session_state.keys()):
+            if key.startswith(("selected_", "display_")):
+                del st.session_state[key]
+        st.success(
+            "✅ セッション状態をリセットしました。ページを再読み込みしてください。"
+        )
+        st.rerun()
 
 
 def organize_bookmarks_by_folder(
@@ -342,25 +564,367 @@ def display_bookmark_tree(
 
 
 def display_bookmark_list_only(bookmarks: List[Bookmark], duplicates: Dict):
-    """ブックマーク一覧のみを表示"""
-    st.write("### 📄 ブックマーク一覧")
+    """
+    改善されたブックマーク一覧表示機能
 
-    # セッション状態の初期化
-    if "selected_bookmarks" not in st.session_state:
-        st.session_state.selected_bookmarks = []
+    要件:
+    - 表示ロジックの修正
+    - プレビュー機能の連携改善
+    - 表示エラー時の適切なメッセージ表示
+    """
+    try:
+        st.write("### 📄 ブックマーク一覧")
 
-    # 全選択/全解除ボタン
-    col1, col2 = st.columns(2)
+        # 入力データの検証
+        if not bookmarks:
+            st.warning("📝 表示するブックマークがありません。")
+            return
 
-    with col1:
-        if st.button("✅ 全選択", key="select_all_list"):
-            st.session_state.selected_bookmarks = bookmarks.copy()
-            st.rerun()
+        if not isinstance(bookmarks, list):
+            st.error("❌ ブックマークデータの形式が正しくありません。")
+            return
 
-    with col2:
-        if st.button("❌ 全解除", key="deselect_all_list"):
+        # セッション状態の初期化（エラーハンドリング付き）
+        _initialize_bookmark_list_session_state()
+
+        # 表示設定コントロール
+        _display_list_controls(bookmarks)
+
+        # フィルタリングとソート
+        try:
+            filtered_bookmarks = _apply_bookmark_filters(bookmarks, duplicates)
+            sorted_bookmarks = _apply_bookmark_sorting(filtered_bookmarks)
+        except Exception as e:
+            st.error(f"❌ ブックマークの処理中にエラーが発生しました: {str(e)}")
+            logger.error(f"ブックマーク処理エラー: {e}")
+            sorted_bookmarks = bookmarks  # フォールバック
+
+        # ページネーション
+        try:
+            paginated_bookmarks = _apply_pagination(sorted_bookmarks)
+        except Exception as e:
+            st.warning(f"⚠️ ページネーション処理でエラーが発生しました: {str(e)}")
+            paginated_bookmarks = sorted_bookmarks[:20]  # 最初の20件のみ表示
+
+        # ブックマーク一覧の表示
+        _display_bookmark_items(paginated_bookmarks, duplicates)
+
+        # プレビュー機能の統合
+        _display_integrated_preview()
+
+    except Exception as e:
+        st.error(f"❌ ブックマーク一覧表示中にエラーが発生しました: {str(e)}")
+        logger.error(f"display_bookmark_list_only エラー: {e}")
+
+        # フォールバック表示
+        _display_simple_bookmark_fallback(bookmarks)
+
+
+def _initialize_bookmark_list_session_state():
+    """ブックマーク一覧用のセッション状態を初期化"""
+    try:
+        if "selected_bookmarks" not in st.session_state:
             st.session_state.selected_bookmarks = []
-            st.rerun()
+
+        if "bookmark_filters" not in st.session_state:
+            st.session_state.bookmark_filters = {
+                "show_duplicates": True,
+                "search_term": "",
+                "folder_filter": "all",
+            }
+
+        if "bookmark_sort" not in st.session_state:
+            st.session_state.bookmark_sort = {"field": "title", "order": "asc"}
+
+        if "pagination" not in st.session_state:
+            st.session_state.pagination = {"current_page": 1, "items_per_page": 20}
+
+        if "preview_bookmark" not in st.session_state:
+            st.session_state.preview_bookmark = None
+
+    except Exception as e:
+        logger.error(f"セッション状態初期化エラー: {e}")
+
+
+def _display_list_controls(bookmarks: List[Bookmark]):
+    """一覧表示のコントロールを表示"""
+    try:
+        # 全選択/全解除ボタン
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            if st.button("✅ 全選択", key="select_all_list"):
+                st.session_state.selected_bookmarks = bookmarks.copy()
+                st.rerun()
+
+        with col2:
+            if st.button("❌ 全解除", key="deselect_all_list"):
+                st.session_state.selected_bookmarks = []
+                st.rerun()
+
+        with col3:
+            # 検索機能
+            search_term = st.text_input(
+                "🔍 検索",
+                value=st.session_state.bookmark_filters.get("search_term", ""),
+                key="bookmark_search",
+                placeholder="タイトルまたはURLで検索",
+            )
+            st.session_state.bookmark_filters["search_term"] = search_term
+
+        with col4:
+            # ソート設定
+            sort_options = ["title", "url", "folder", "date"]
+            sort_field = st.selectbox(
+                "📊 ソート",
+                sort_options,
+                index=sort_options.index(
+                    st.session_state.bookmark_sort.get("field", "title")
+                ),
+                key="bookmark_sort_field",
+            )
+            st.session_state.bookmark_sort["field"] = sort_field
+
+        # フィルター設定
+        col5, col6 = st.columns(2)
+
+        with col5:
+            show_duplicates = st.checkbox(
+                "🔄 重複も表示",
+                value=st.session_state.bookmark_filters.get("show_duplicates", True),
+                key="show_duplicates_filter",
+            )
+            st.session_state.bookmark_filters["show_duplicates"] = show_duplicates
+
+        with col6:
+            items_per_page = st.selectbox(
+                "📄 表示件数",
+                [10, 20, 50, 100],
+                index=[10, 20, 50, 100].index(
+                    st.session_state.pagination.get("items_per_page", 20)
+                ),
+                key="items_per_page_select",
+            )
+            st.session_state.pagination["items_per_page"] = items_per_page
+
+    except Exception as e:
+        st.warning(f"⚠️ コントロール表示でエラーが発生しました: {str(e)}")
+        logger.error(f"コントロール表示エラー: {e}")
+
+
+def _apply_bookmark_filters(
+    bookmarks: List[Bookmark], duplicates: Dict
+) -> List[Bookmark]:
+    """ブックマークにフィルターを適用"""
+    try:
+        filtered_bookmarks = bookmarks.copy()
+        filters = st.session_state.bookmark_filters
+
+        # 検索フィルター
+        search_term = filters.get("search_term", "").lower().strip()
+        if search_term:
+            filtered_bookmarks = [
+                bookmark
+                for bookmark in filtered_bookmarks
+                if search_term in bookmark.title.lower()
+                or search_term in bookmark.url.lower()
+            ]
+
+        # 重複フィルター
+        if not filters.get("show_duplicates", True):
+            duplicate_urls = {dup.get("url", "") for dup in duplicates.get("files", [])}
+            filtered_bookmarks = [
+                bookmark
+                for bookmark in filtered_bookmarks
+                if bookmark.url not in duplicate_urls
+            ]
+
+        return filtered_bookmarks
+
+    except Exception as e:
+        logger.error(f"フィルター適用エラー: {e}")
+        return bookmarks
+
+
+def _apply_bookmark_sorting(bookmarks: List[Bookmark]) -> List[Bookmark]:
+    """ブックマークにソートを適用"""
+    try:
+        sort_config = st.session_state.bookmark_sort
+        field = sort_config.get("field", "title")
+        reverse = sort_config.get("order", "asc") == "desc"
+
+        if field == "title":
+            return sorted(bookmarks, key=lambda b: b.title.lower(), reverse=reverse)
+        elif field == "url":
+            return sorted(bookmarks, key=lambda b: b.url.lower(), reverse=reverse)
+        elif field == "folder":
+            return sorted(
+                bookmarks,
+                key=lambda b: " > ".join(b.folder_path) if b.folder_path else "",
+                reverse=reverse,
+            )
+        elif field == "date":
+            return sorted(
+                bookmarks, key=lambda b: b.add_date or datetime.min, reverse=reverse
+            )
+        else:
+            return bookmarks
+
+    except Exception as e:
+        logger.error(f"ソート適用エラー: {e}")
+        return bookmarks
+
+
+def _apply_pagination(bookmarks: List[Bookmark]) -> List[Bookmark]:
+    """ページネーションを適用"""
+    try:
+        pagination = st.session_state.pagination
+        items_per_page = pagination.get("items_per_page", 20)
+        current_page = pagination.get("current_page", 1)
+
+        total_items = len(bookmarks)
+        total_pages = (total_items + items_per_page - 1) // items_per_page
+
+        if total_pages > 1:
+            # ページ選択
+            col1, col2, col3 = st.columns([1, 2, 1])
+
+            with col2:
+                page = st.selectbox(
+                    f"ページ ({total_items}件中)",
+                    range(1, total_pages + 1),
+                    index=current_page - 1,
+                    key="pagination_page_select",
+                )
+                st.session_state.pagination["current_page"] = page
+
+            start_idx = (page - 1) * items_per_page
+            end_idx = min(start_idx + items_per_page, total_items)
+
+            return bookmarks[start_idx:end_idx]
+        else:
+            return bookmarks
+
+    except Exception as e:
+        logger.error(f"ページネーション適用エラー: {e}")
+        return bookmarks[:20]  # フォールバック
+
+
+def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
+    """ブックマークアイテムを表示"""
+    try:
+        duplicate_urls = {dup.get("url", "") for dup in duplicates.get("files", [])}
+        selected_bookmarks = st.session_state.get("selected_bookmarks", [])
+
+        for i, bookmark in enumerate(bookmarks):
+            # 重複チェック
+            is_duplicate = bookmark.url in duplicate_urls
+
+            # 選択状態チェック
+            is_selected = any(b.url == bookmark.url for b in selected_bookmarks)
+
+            # アイテム表示
+            with st.container():
+                col1, col2, col3 = st.columns([0.5, 8, 1.5])
+
+                with col1:
+                    # 選択チェックボックス
+                    selected = st.checkbox(
+                        "",
+                        value=is_selected,
+                        key=f"bookmark_select_{i}_{bookmark.url[:20]}",
+                    )
+
+                    # 選択状態の更新
+                    if selected and not is_selected:
+                        st.session_state.selected_bookmarks.append(bookmark)
+                    elif not selected and is_selected:
+                        st.session_state.selected_bookmarks = [
+                            b for b in selected_bookmarks if b.url != bookmark.url
+                        ]
+
+                with col2:
+                    # ブックマーク情報表示
+                    title_display = (
+                        bookmark.title[:60] + "..."
+                        if len(bookmark.title) > 60
+                        else bookmark.title
+                    )
+
+                    if is_duplicate:
+                        st.markdown(f"🔄 **{title_display}** *(重複)*")
+                    else:
+                        st.markdown(f"📄 **{title_display}**")
+
+                    st.markdown(f"🔗 [{bookmark.url[:80]}...]({bookmark.url})")
+
+                    if bookmark.folder_path:
+                        st.markdown(f"📁 {' > '.join(bookmark.folder_path)}")
+
+                with col3:
+                    # プレビューボタン
+                    if st.button(
+                        "👁️ プレビュー", key=f"preview_{i}_{bookmark.url[:20]}"
+                    ):
+                        st.session_state.preview_bookmark = bookmark
+                        st.rerun()
+
+                st.markdown("---")
+
+    except Exception as e:
+        st.error(f"❌ ブックマークアイテム表示でエラーが発生しました: {str(e)}")
+        logger.error(f"ブックマークアイテム表示エラー: {e}")
+
+
+def _display_integrated_preview():
+    """統合されたプレビュー機能を表示"""
+    try:
+        preview_bookmark = st.session_state.get("preview_bookmark")
+
+        if preview_bookmark:
+            st.markdown("### 👁️ プレビュー")
+
+            with st.expander(f"📄 {preview_bookmark.title}", expanded=True):
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.markdown(
+                        f"**📎 URL:** [{preview_bookmark.url}]({preview_bookmark.url})"
+                    )
+
+                    if preview_bookmark.folder_path:
+                        st.markdown(
+                            f"**📁 フォルダ:** {' > '.join(preview_bookmark.folder_path)}"
+                        )
+
+                    if preview_bookmark.add_date:
+                        st.markdown(
+                            f"**📅 追加日時:** {preview_bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}"
+                        )
+
+                with col2:
+                    if st.button("❌ プレビューを閉じる", key="close_preview"):
+                        st.session_state.preview_bookmark = None
+                        st.rerun()
+
+    except Exception as e:
+        logger.error(f"プレビュー表示エラー: {e}")
+
+
+def _display_simple_bookmark_fallback(bookmarks: List[Bookmark]):
+    """シンプルなフォールバック表示"""
+    try:
+        st.markdown("### 📄 シンプル表示モード")
+        st.info(
+            "⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。"
+        )
+
+        for i, bookmark in enumerate(bookmarks[:10]):  # 最初の10件のみ
+            st.markdown(f"**{i + 1}.** [{bookmark.title}]({bookmark.url})")
+
+    except Exception as e:
+        st.error(f"❌ フォールバック表示でもエラーが発生しました: {str(e)}")
+        logger.error(f"フォールバック表示エラー: {e}")
 
 
 def display_bookmark_structure_tree(
