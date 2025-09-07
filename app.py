@@ -710,6 +710,8 @@ def main():
 
                     # 解析結果の表示
                     if bookmarks:
+                        # セッション状態からparserを取得、または新しく作成
+                        parser = st.session_state.get("parser", BookmarkParser())
                         stats = parser.get_statistics(bookmarks)
 
                         # 統計情報の表示
@@ -1039,6 +1041,9 @@ def execute_optimized_bookmark_analysis(
                     use_parallel=use_parallel,
                     progress_callback=progress_callback,
                 )
+
+                # parserをセッション状態に保存
+                st.session_state["parser"] = parser
 
                 # 解析結果をキャッシュに保存
                 if cache_enabled and bookmarks:
