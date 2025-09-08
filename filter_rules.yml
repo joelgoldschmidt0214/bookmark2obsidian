@@ -52,6 +52,9 @@ deny:
     - atcoder.jp
     - onedrive.live.com
     - portal.azure.com
+    - www.slideshare.net
+    - speakerdeck.com
+    - www.docswell.com
 
   subdomain_keywords:
     - my.
@@ -75,6 +78,7 @@ deny:
     - /client/
     - /mypage/
     - /gp/video/
+    - .pdf
 
 # ===================================================
 # 正規表現による拒否リスト (上級者向け)
