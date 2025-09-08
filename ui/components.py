@@ -7,6 +7,7 @@ import streamlit as st
 from pathlib import Path
 import os
 import logging
+import re
 import time
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
@@ -14,7 +15,6 @@ from datetime import datetime
 
 # 作成したモジュールからのインポート
 from utils.models import Bookmark
-from core.file_manager import LocalDirectoryManager
 from core.scraper import WebScraper
 from core.generator import MarkdownGenerator
 
@@ -670,12 +670,12 @@ def display_bookmark_tree(
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("✅ 全選択", key="select_all_tree"):
+        if st.button("✅ 全選択", key="select_all_tree_folder"):
             st.session_state.selected_bookmarks = bookmarks.copy()
             st.rerun()
 
     with col2:
-        if st.button("❌ 全解除", key="deselect_all_tree"):
+        if st.button("❌ 全解除", key="deselect_all_tree_folder"):
             st.session_state.selected_bookmarks = []
             st.rerun()
 
@@ -770,12 +770,12 @@ def _display_list_controls(bookmarks: List[Bookmark]):
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            if st.button("✅ 全選択", key="select_all_list"):
+            if st.button("✅ 全選択", key="select_all_list_main"):
                 st.session_state.selected_bookmarks = bookmarks.copy()
                 st.rerun()
 
         with col2:
-            if st.button("❌ 全解除", key="deselect_all_list"):
+            if st.button("❌ 全解除", key="deselect_all_list_main"):
                 st.session_state.selected_bookmarks = []
                 st.rerun()
 
@@ -997,7 +997,7 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
                     selected = st.checkbox(
                         "選択",
                         value=is_selected,
-                        key=f"bookmark_select_{i}_{bookmark.url[:20]}",
+                        key=f"bookmark_select_{i}_{hash(bookmark.url) % 10000}",
                         label_visibility="collapsed",
                     )
 
@@ -1030,10 +1030,10 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
                 with col3:
                     # プレビューボタン
                     if st.button(
-                        "👁️ プレビュー", key=f"preview_{i}_{bookmark.url[:20]}"
+                        "👁️ プレビュー",
+                        key=f"preview_{i}_{hash(bookmark.url) % 10000}",
                     ):
                         st.session_state.preview_bookmark = bookmark
-                        # st.rerun()を削除してページ全体の再実行を防ぐ
 
                 st.markdown("---")
 
@@ -1101,12 +1101,13 @@ def _display_markdown_preview(bookmark):
             enable_scraping = st.checkbox(
                 "🌐 Webページの内容を取得",
                 value=False,
-                key=f"scraping_{bookmark.url[:20]}",
+                key=f"scraping_{hash(bookmark.url) % 10000}",
             )
 
         with col2:
             if st.button(
-                "🔄 プレビューを更新", key=f"refresh_preview_{bookmark.url[:20]}"
+                "🔄 プレビューを更新",
+                key=f"refresh_preview_{hash(bookmark.url) % 10000}",
             ):
                 # プレビューキャッシュをクリア
                 if f"markdown_preview_{bookmark.url}" in st.session_state:
@@ -1122,13 +1123,34 @@ def _display_markdown_preview(bookmark):
                 if enable_scraping:
                     try:
                         scraper = WebScraper()
-                        scraped_data = scraper.scrape_page(bookmark.url)
+                        scraped_data = scraper.fetch_page_content(bookmark.url)
                     except Exception as e:
                         st.warning(f"⚠️ Webページの取得に失敗しました: {str(e)}")
 
-                # Markdownを生成
-                markdown_content = generator.generate_markdown(bookmark, scraped_data)
-                st.session_state[cache_key] = markdown_content
+                try:
+                    # Markdownを生成
+                    page_data = scraped_data if scraped_data else {}
+                    markdown_content = generator.generate_obsidian_markdown(
+                        page_data, bookmark
+                    )
+
+                    # 生成されたMarkdownの検証
+                    if not markdown_content or not isinstance(markdown_content, str):
+                        raise ValueError("Markdownコンテンツの生成に失敗しました")
+
+                    st.session_state[cache_key] = markdown_content
+                except Exception as gen_error:
+                    st.error(f"❌ Markdown生成エラー: {str(gen_error)}")
+                    # フォールバック用の基本Markdownを生成
+                    fallback_content = f"""# {bookmark.title}
+
+**URL:** {bookmark.url}
+**作成日:** {bookmark.created}
+**フォルダ:** {bookmark.folder}
+
+> Markdownの自動生成に失敗しました。基本情報のみ表示しています。
+"""
+                    st.session_state[cache_key] = fallback_content
         else:
             markdown_content = st.session_state[cache_key]
 
@@ -1139,25 +1161,49 @@ def _display_markdown_preview(bookmark):
         preview_tab1, preview_tab2 = st.tabs(["レンダリング結果", "Markdownソース"])
 
         with preview_tab1:
-            # レンダリング結果を表示
-            st.markdown(markdown_content, unsafe_allow_html=True)
+            try:
+                # レンダリング結果を表示（安全にHTMLを処理）
+                if markdown_content:
+                    st.markdown(markdown_content, unsafe_allow_html=False)
+                else:
+                    st.warning("表示するMarkdownコンテンツがありません")
+            except Exception as render_error:
+                st.error(f"❌ Markdownレンダリングエラー: {str(render_error)}")
+                st.code(markdown_content, language="markdown")
 
         with preview_tab2:
-            # Markdownソースを表示
-            st.code(markdown_content, language="markdown")
+            try:
+                # Markdownソースを表示
+                if markdown_content:
+                    st.code(markdown_content, language="markdown")
 
-            # ダウンロードボタン
-            st.download_button(
-                label="💾 Markdownファイルをダウンロード",
-                data=markdown_content,
-                file_name=f"{generator.sanitize_filename(bookmark.title)}.md",
-                mime="text/markdown",
-                key=f"download_{bookmark.url[:20]}",
-            )
+                    # ファイル名を安全に生成
+                    safe_filename = re.sub(r'[<>:"/\\|?*]', "_", bookmark.title[:50])
+                    if not safe_filename:
+                        safe_filename = "bookmark"
+
+                    # ダウンロードボタン
+                    st.download_button(
+                        label="💾 Markdownファイルをダウンロード",
+                        data=markdown_content,
+                        file_name=f"{safe_filename}.md",
+                        mime="text/markdown",
+                        key=f"download_{hash(bookmark.url) % 10000}",
+                    )
+                else:
+                    st.warning("ダウンロードするMarkdownコンテンツがありません")
+            except Exception as download_error:
+                st.error(f"❌ ダウンロード準備エラー: {str(download_error)}")
 
     except Exception as e:
         st.error(f"❌ Markdownプレビューの生成に失敗しました: {str(e)}")
         logger.error(f"Markdownプレビューエラー: {e}")
+
+        # デバッグ情報を表示（開発時のみ）
+        if st.checkbox(
+            "🔍 デバッグ情報を表示", key=f"debug_{hash(bookmark.url) % 10000}"
+        ):
+            st.code(f"エラー詳細: {str(e)}\nブックマーク: {bookmark}", language="text")
 
 
 def _display_simple_bookmark_fallback(bookmarks: List[Bookmark]):

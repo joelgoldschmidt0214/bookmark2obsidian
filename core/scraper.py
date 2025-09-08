@@ -37,7 +37,7 @@ class WebScraper:
         self.domain_last_access = {}  # ドメインごとの最終アクセス時刻
         self.rate_limit_delay = 3  # デフォルトの待ち時間（秒）
         self.timeout = 10  # リクエストタイムアウト（秒）
-        self.user_agent = "Mozilla/5.0 (compatible; BookmarkToObsidian/1.0; +https://github.com/user/bookmark-to-obsidian)"
+        self.user_agent = "Mozilla/5.0"
 
         # セッション設定
         self.session = requests.Session()
