@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Callable
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import yaml
 
 from utils.models import Bookmark
 from utils.performance_utils import PerformanceOptimizer, performance_monitor
@@ -29,16 +30,47 @@ class BookmarkParser:
     フォルダ階層の解析、除外ルールの適用、統計情報の生成などの機能を提供します。
     """
 
-    def __init__(self):
+    def __init__(self, rules_path: str = "filter_rules.yml"):
         """
         BookmarkParserを初期化
 
-        除外ドメインと除外URLのセットを初期化します。
+        Args:
+            rules_path (str): フィルタリングルールを定義したYAMLファイルのパス
         """
-        self.excluded_domains = set()
-        self.excluded_urls = set()
         self.performance_optimizer = PerformanceOptimizer()
         self._lock = threading.Lock()  # スレッドセーフ用のロック
+        self.rules_path = rules_path
+        self._load_filter_rules()
+
+    def _load_filter_rules(self):
+        """フィルタリングルールをYAMLファイルから読み込む"""
+        try:
+            with open(self.rules_path, "r", encoding="utf-8") as f:
+                rules = yaml.safe_load(f) or {}
+            
+            # 各ルールを属性として設定（getでキーが存在しない場合も考慮）
+            self.allow_rules = rules.get("allow", {})
+            self.deny_rules = rules.get("deny", {})
+            self.regex_deny_rules = rules.get("regex_deny", {})
+            
+            # 高速な検索のためにセットやリストに変換して保持
+            self.allow_domains = set(self.allow_rules.get("domains", []))
+            self.deny_domains = set(self.deny_rules.get("domains", []))
+            self.deny_subdomains = self.deny_rules.get("subdomain_keywords", [])
+            self.allow_path_keywords = self.allow_rules.get("path_keywords", [])
+            self.deny_path_keywords = self.deny_rules.get("path_keywords", [])
+            self.regex_deny_patterns = self.regex_deny_rules.get("patterns", [])
+
+            logger.info(f"フィルタリングルールを '{self.rules_path}' から読み込みました。")
+
+        except FileNotFoundError:
+            logger.warning(f"ルールファイル '{self.rules_path}' が見つかりません。基本的なフィルタリングのみ行います。")
+            # ルールが存在しない場合のデフォルト値を設定
+            self.allow_domains, self.deny_domains = set(), set()
+            self.deny_subdomains, self.allow_path_keywords, self.deny_path_keywords, self.regex_deny_patterns = [], [], [], []
+        except Exception as e:
+            logger.error(f"ルールファイルの読み込みに失敗しました: {e}")
+            raise ValueError("ルールファイルの解析に失敗しました。")
 
     def parse_bookmarks(self, html_content: str) -> List[Bookmark]:
         """
@@ -241,36 +273,56 @@ class BookmarkParser:
 
     def _should_exclude_bookmark(self, bookmark: Bookmark) -> bool:
         """
-        ブックマークを除外すべきかどうかを判定
+        ブックマークを除外すべきかどうかをルールベースで判定する
 
         Args:
             bookmark: 判定対象のブックマーク
 
         Returns:
-            bool: 除外すべき場合True
+            bool: 除外すべき場合True (スクレイピングしない) / False (スクレイピング対象)
         """
-        # ドメインルートURLの除外
-        if self._is_domain_root_url(bookmark.url):
+        url = bookmark.url
+        
+        # 1. 基本的なURLの有効性チェック
+        if not self._is_valid_url(url):
             return True
 
-        # 無効なURLの除外
-        if not self._is_valid_url(bookmark.url):
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        path = parsed_url.path
+
+        # 2. 【最優先・拒否】正規表現による拒否
+        if any(re.search(pattern, url) for pattern in self.regex_deny_patterns):
             return True
 
-        # 除外リストに含まれるURLの除外
-        if bookmark.url in self.excluded_urls:
+        # 3. 【拒否】ドメインによる拒否
+        if domain in self.deny_domains:
             return True
 
-        # 除外ドメインの確認
-        try:
-            parsed_url = urlparse(bookmark.url)
-            domain = parsed_url.netloc.lower()
-            if domain in self.excluded_domains:
-                return True
-        except Exception:
+        # 4. 【拒否】サブドメインキーワードによる拒否
+        if any(domain.startswith(keyword) for keyword in self.deny_subdomains):
             return True
 
-        return False
+        # 5. 【最優先・許可】ドメインによる許可
+        if domain in self.allow_domains:
+            return self._is_domain_root_url(url) # ドメインルートは除外
+
+        # 6. 【パス】パスキーワードによる拒否
+        if self.deny_path_keywords and any(keyword in path for keyword in self.deny_path_keywords):
+            return True
+
+        # 7. 【パス】パスキーワードによる許可
+        if self.allow_path_keywords and any(keyword in path for keyword in self.allow_path_keywords):
+            return self._is_domain_root_url(url) # ドメインルートは除外
+
+        # 8. 【デフォルト】上記ルールに非該当
+        # ドメインルートは常に除外
+        if self._is_domain_root_url(url):
+            return True
+
+        # ここまで到達したURLは、どの許可ルールにも一致しなかったということ。
+        # 安全のため、デフォルトでは除外する。
+        return True
 
     def _is_domain_root_url(self, url: str) -> bool:
         """
@@ -355,24 +407,6 @@ class BookmarkParser:
                 filename = filename[:-3] + "..."
 
         return filename
-
-    def add_excluded_domain(self, domain: str) -> None:
-        """
-        除外ドメインを追加
-
-        Args:
-            domain: 除外するドメイン名
-        """
-        self.excluded_domains.add(domain.lower())
-
-    def add_excluded_url(self, url: str) -> None:
-        """
-        除外URLを追加
-
-        Args:
-            url: 除外するURL
-        """
-        self.excluded_urls.add(url)
 
     def get_statistics(self, bookmarks: List[Bookmark]) -> Dict[str, int]:
         """

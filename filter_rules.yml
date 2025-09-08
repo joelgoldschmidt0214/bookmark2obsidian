@@ -1,0 +1,86 @@
+# フィルタリングルール設定ファイル
+
+# ===================================================
+# 許可リスト：ブログやニュース記事として処理したいサイト
+# ===================================================
+allow:
+  domains:
+    - qiita.com
+    - zenn.dev
+    - note.com
+    - developers.io
+    - enterprisezine.jp
+    - codezine.jp
+    - president.jp
+    - toyokeizai.net
+    - business.nikkei.com
+    - gendai.media
+    - wired.jp
+    - gigazine.net
+    - tabiiro.jp
+
+  path_keywords:
+    - /article/
+    - /articles/
+    - /column/
+    - /items/
+    - /entry/
+    - /blog/
+    - /news/
+    - /archives/
+
+# ===================================================
+# 拒否リスト：Webサービスなど、記事コンテンツではないサイト
+# ===================================================
+deny:
+  domains:
+    - google.com
+    - google.co.jp
+    - yahoo.co.jp
+    - amazon.co.jp
+    - rakuten.co.jp
+    - rakuten-card.co.jp
+    - moneyforward.com
+    - sbisec.co.jp
+    - deepl.com
+    - figma.com
+    - trello.com
+    - slack.com
+    - notion.site
+    - prog-8.com
+    - linkedin.com
+    - atcoder.jp
+    - onedrive.live.com
+    - portal.azure.com
+
+  subdomain_keywords:
+    - my.
+    - myaccount.
+    - app.
+    - portal.
+    - secure.
+    - biz.
+    - invoice.
+    - weekly.
+    - members.
+    - scholar.
+    - book.
+    - mail.
+
+  path_keywords:
+    - /login
+    - /signin
+    - /users/sign_in
+    - /dashboard
+    - /client/
+    - /mypage/
+    - /gp/video/
+
+# ===================================================
+# 正規表現による拒否リスト (上級者向け)
+# ===================================================
+regex_deny:
+  patterns:
+    - '^https?:\/\/localhost'
+    - '^https?:\/\/127\.0\.0\.1'
+    - '^https?:\/\/192\.168\.'
