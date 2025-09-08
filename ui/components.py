@@ -3,20 +3,22 @@ UI Components Module
 Streamlit用のUIコンポーネント関数群
 """
 
-import streamlit as st
-from pathlib import Path
-import os
 import logging
+import os
 import re
 import time
-from typing import List, Dict, Any, Tuple
-from urllib.parse import urlparse
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
+
+import streamlit as st
+
+from core.generator import MarkdownGenerator
+from core.scraper import WebScraper
 
 # 作成したモジュールからのインポート
 from utils.models import Bookmark
-from core.scraper import WebScraper
-from core.generator import MarkdownGenerator
 
 # ロガーの取得
 logger = logging.getLogger(__name__)
@@ -138,43 +140,35 @@ def handle_edge_cases_and_errors(bookmarks: List[Bookmark]) -> Dict[str, Any]:
     for bookmark in bookmarks:
         # ブックマークの型チェック
         if not hasattr(bookmark, "title"):
-            logger.error(
-                f"統計計算で無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
-            )
+            logger.error(f"統計計算で無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}")
             continue
 
         # URL形式の検証
         if not _is_valid_url_format(bookmark.url):
-            result["problematic_urls"].append(
-                {
-                    "title": bookmark.title,
-                    "url": bookmark.url,
-                    "reason": "無効なURL形式",
-                }
-            )
+            result["problematic_urls"].append({
+                "title": bookmark.title,
+                "url": bookmark.url,
+                "reason": "無効なURL形式",
+            })
             result["statistics"]["invalid_urls"] += 1
             continue
 
         # ドメインルートURLの検出
         if _is_domain_root_url(bookmark.url):
-            result["domain_root_urls"].append(
-                {
-                    "title": bookmark.title,
-                    "url": bookmark.url,
-                    "folder_path": bookmark.folder_path,
-                }
-            )
+            result["domain_root_urls"].append({
+                "title": bookmark.title,
+                "url": bookmark.url,
+                "folder_path": bookmark.folder_path,
+            })
             result["statistics"]["domain_roots"] += 1
 
         # タイトルの問題文字チェック
         if _has_problematic_characters(bookmark.title):
-            result["problematic_titles"].append(
-                {
-                    "title": bookmark.title,
-                    "url": bookmark.url,
-                    "folder_path": bookmark.folder_path,
-                }
-            )
+            result["problematic_titles"].append({
+                "title": bookmark.title,
+                "url": bookmark.url,
+                "folder_path": bookmark.folder_path,
+            })
             result["statistics"]["problematic_titles"] += 1
 
         # 有効なブックマークとしてカウント
@@ -213,26 +207,42 @@ def _has_problematic_characters(title: str) -> bool:
 # ===== 情報表示関数 =====
 
 
-def display_edge_case_summary(edge_case_result: Dict[str, Any]):
-    """特殊ケースの要約表示"""
+def display_edge_case_summary(edge_case_result: Dict[str, Any], show_details: bool = False):
+    """特殊ケースの要約と詳細を表示"""
     st.subheader("📊 ブックマーク分析結果")
-
-    # 統計情報の表示
     stats = edge_case_result["statistics"]
-
     col1, col2, col3, col4 = st.columns(4)
-
     with col1:
         st.metric("総ブックマーク数", edge_case_result["total_bookmarks"])
-
     with col2:
         st.metric("有効なブックマーク", stats["valid_bookmarks"])
-
     with col3:
         st.metric("ドメインルートURL", stats["domain_roots"])
-
     with col4:
-        st.metric("問題のあるURL", stats["invalid_urls"])
+        st.metric("問題のあるURL/タイトル", stats["invalid_urls"] + stats["problematic_titles"])
+
+    if not show_details:
+        return
+
+    st.markdown("---")
+    st.subheader("詳細リスト")
+    with st.expander(f"🔗 ドメインルートURL ({len(edge_case_result['domain_root_urls'])}件)"):
+        if edge_case_result["domain_root_urls"]:
+            st.table(edge_case_result["domain_root_urls"])
+        else:
+            st.info("該当するブックマークはありません。")
+
+    with st.expander(f"🤔 問題のあるURL ({len(edge_case_result['problematic_urls'])}件)"):
+        if edge_case_result["problematic_urls"]:
+            st.table(edge_case_result["problematic_urls"])
+        else:
+            st.info("該当するブックマークはありません。")
+
+    with st.expander(f"📝 問題のあるタイトル ({len(edge_case_result['problematic_titles'])}件)"):
+        if edge_case_result["problematic_titles"]:
+            st.table(edge_case_result["problematic_titles"])
+        else:
+            st.info("該当するブックマークはありません。")
 
 
 def display_user_friendly_messages():
@@ -244,7 +254,7 @@ def display_user_friendly_messages():
         st.markdown("""
         1. **ブックマークファイルをアップロード**
            - ブラウザからエクスポートしたbookmarks.htmlを選択
-        
+
         2. **出力ディレクトリを指定**
            - Obsidianのvaultディレクトリを指定
         
@@ -277,73 +287,25 @@ def show_application_info():
 # ===== ブックマーク表示・プレビュー関数 =====
 
 
-def display_page_list_and_preview(
-    bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path
-):
-    """
-    改善されたページ一覧表示とプレビュー機能
+def display_page_list_and_preview(bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path):
+    """改善されたページ一覧表示とプレビュー機能"""
+    st.subheader("📋 ブックマーク一覧とプレビュー")
+    if not bookmarks:
+        st.warning("表示するブックマークがありません。")
+        return
 
-    要件:
-    - エラーハンドリング付きの結果表示機能
-    - セッション状態管理の改善
-    - 表示エラー時の適切なメッセージ表示
-    """
-    try:
-        st.subheader("📋 ブックマーク一覧とプレビュー")
+    # 表示モード選択
+    display_mode = st.radio("表示モード", ["📁 フォルダ別表示", "📄 一覧表示"], horizontal=True, key="display_mode")
 
-        # 入力データの検証
-        if not _validate_display_inputs(bookmarks, duplicates, output_directory):
-            return
-
-        # セッション状態の初期化と管理
-        _initialize_session_state()
-
-        # 統計情報の表示
-        _display_bookmark_statistics(bookmarks, duplicates)
-
-        # フォルダ別に整理（エラーハンドリング付き）
-        try:
-            folder_groups = organize_bookmarks_by_folder(bookmarks)
-        except Exception as e:
-            st.error(f"❌ フォルダ整理中にエラーが発生しました: {str(e)}")
-            logger.error(f"フォルダ整理エラー: {e}")
-            return
-
-        # 表示モード選択
-        display_mode = st.radio(
-            "表示モード",
-            ["📁 フォルダ別表示", "📄 一覧表示"],
-            horizontal=True,
-            key="display_mode_selection",
-        )
-
-        # 表示モードに応じた処理（エラーハンドリング付き）
-        try:
-            if display_mode == "📁 フォルダ別表示":
-                display_bookmark_tree(bookmarks, folder_groups, duplicates)
-            else:
-                display_bookmark_list_only(bookmarks, duplicates)
-        except Exception as e:
-            st.error(f"❌ ブックマーク表示中にエラーが発生しました: {str(e)}")
-            logger.error(f"ブックマーク表示エラー: {e}")
-
-            # フォールバック表示
-            _display_fallback_bookmark_list(bookmarks)
-
-        # 選択状態の表示と管理
-        _display_selection_summary()
-
-    except Exception as e:
-        st.error(f"❌ 予期しないエラーが発生しました: {str(e)}")
-        logger.error(f"display_page_list_and_preview エラー: {e}")
-
-        # 緊急時のフォールバック
-        _display_emergency_fallback()
+    if display_mode == "📁 フォルダ別表示":
+        folder_groups = organize_bookmarks_by_folder(bookmarks)
+        tree_structure = build_folder_tree_structure(folder_groups)
+        render_tree_recursively(tree_structure)
+    else:
+        display_scrollable_bookmark_list(bookmarks, duplicates)
 
 
-def _validate_display_inputs(
-    bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path
-) -> bool:
+def _validate_display_inputs(bookmarks: List[Bookmark], duplicates: Dict, output_directory: Path) -> bool:
     """表示機能の入力データを検証"""
     try:
         # ブックマークリストの検証
@@ -416,9 +378,7 @@ def _display_bookmark_statistics(bookmarks: List[Bookmark], duplicates: Dict):
             st.metric("総ブックマーク数", len(bookmarks))
 
         with col2:
-            duplicate_files = (
-                duplicates.get("files", []) if isinstance(duplicates, dict) else []
-            )
+            duplicate_files = duplicates.get("files", []) if isinstance(duplicates, dict) else []
             duplicate_count = len(duplicate_files)
             st.metric("重複ファイル", duplicate_count)
 
@@ -455,9 +415,7 @@ def _display_selection_summary():
             col1, col2 = st.columns(2)
 
             with col1:
-                st.info(
-                    f"✅ {len(selected_bookmarks)}個のブックマークが選択されています"
-                )
+                st.info(f"✅ {len(selected_bookmarks)}個のブックマークが選択されています")
 
             with col2:
                 if st.button("🗑️ 選択をクリア", key="clear_selection"):
@@ -472,18 +430,14 @@ def _display_fallback_bookmark_list(bookmarks: List[Bookmark]):
     """フォールバック用のシンプルなブックマーク一覧表示"""
     try:
         st.markdown("### 📄 シンプル表示モード")
-        st.info(
-            "⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。"
-        )
+        st.info("⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。")
 
         # ページネーション
         items_per_page = 10
         total_pages = (len(bookmarks) + items_per_page - 1) // items_per_page
 
         if total_pages > 1:
-            page = st.selectbox(
-                "ページ", range(1, total_pages + 1), key="fallback_page"
-            )
+            page = st.selectbox("ページ", range(1, total_pages + 1), key="fallback_page")
             start_idx = (page - 1) * items_per_page
             end_idx = min(start_idx + items_per_page, len(bookmarks))
             page_bookmarks = bookmarks[start_idx:end_idx]
@@ -523,218 +477,191 @@ def _display_emergency_fallback():
         for key in list(st.session_state.keys()):
             if key.startswith(("selected_", "display_")):
                 del st.session_state[key]
-        st.success(
-            "✅ セッション状態をリセットしました。ページを再読み込みしてください。"
-        )
+        st.success("✅ セッション状態をリセットしました。ページを再読み込みしてください。")
         st.rerun()
 
 
-def organize_bookmarks_by_folder(
-    bookmarks: List[Bookmark],
-) -> Dict[tuple, List[Bookmark]]:
+def organize_bookmarks_by_folder(bookmarks: List[Bookmark]) -> Dict[tuple, List[Bookmark]]:
     """ブックマークをフォルダ別に整理"""
     folder_groups = {}
-    folder_path_stats = {"empty": 0, "has_path": 0, "invalid": 0}
-
-    logger.info(f"フォルダ整理開始: {len(bookmarks)}個のブックマークを処理")
-
-    for i, bookmark in enumerate(bookmarks):
-        # ブックマークの型チェック
-        if not hasattr(bookmark, "title"):
-            logger.error(
-                f"無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
-            )
-            folder_path_stats["invalid"] += 1
-            continue
-
-        # フォルダパス情報をデバッグ
-        if hasattr(bookmark, "folder_path"):
-            if bookmark.folder_path:
-                folder_path_stats["has_path"] += 1
-                if i < 5:  # 最初の5件をログ出力
-                    logger.info(
-                        f"ブックマーク {i + 1}: {bookmark.title[:30]}... → フォルダパス: {bookmark.folder_path}"
-                    )
-            else:
-                folder_path_stats["empty"] += 1
-                if i < 5:  # 最初の5件をログ出力
-                    logger.info(
-                        f"ブックマーク {i + 1}: {bookmark.title[:30]}... → フォルダパス: 空"
-                    )
-        else:
-            folder_path_stats["invalid"] += 1
-            logger.warning(f"ブックマーク {i + 1}: folder_path属性なし")
-
-        # フォルダパスをタプルに変換（辞書のキーとして使用）
+    for bookmark in bookmarks:
         folder_key = tuple(bookmark.folder_path) if bookmark.folder_path else tuple()
-
         if folder_key not in folder_groups:
             folder_groups[folder_key] = []
-
         folder_groups[folder_key].append(bookmark)
+    return folder_groups
 
-    # デバッグ情報をログに出力
-    logger.info(
-        f"フォルダ整理結果: フォルダパスあり={folder_path_stats['has_path']}, フォルダパスなし={folder_path_stats['empty']}, 無効={folder_path_stats['invalid']}, グループ数={len(folder_groups)}"
+
+# --- ✨新規追加: フォルダツリーを階層的に表示するための関数群 ---
+
+
+def build_folder_tree_structure(folder_groups: Dict[tuple, List[Bookmark]]) -> Dict:
+    """
+    フラットなフォルダ辞書から階層的なツリー構造を構築する
+    """
+    tree = {"bookmarks": [], "children": {}}
+
+    # ルートフォルダのブックマーク
+    if tuple() in folder_groups:
+        tree["bookmarks"] = folder_groups[tuple()]
+
+    for path_tuple, bookmarks in folder_groups.items():
+        if not path_tuple:
+            continue
+
+        current_level = tree
+        for folder_name in path_tuple:
+            if folder_name not in current_level["children"]:
+                current_level["children"][folder_name] = {"bookmarks": [], "children": {}}
+            current_level = current_level["children"][folder_name]
+        current_level["bookmarks"] = bookmarks
+
+    return tree
+
+
+def render_tree_recursively(tree: Dict, level: int = 0):
+    """
+    階層的なツリー構造をst.expanderを使って再帰的に描画する
+    """
+    # 現在の階層のブックマークを表示
+    for bookmark in tree.get("bookmarks", []):
+        st.markdown(f"{' ' * level * 4}📄 {bookmark.title}")
+
+    # 子フォルダを再帰的に表示
+    sorted_children = sorted(tree.get("children", {}).items())
+    for folder_name, child_tree in sorted_children:
+        # 子要素全体のブックマーク数を計算
+        def count_bookmarks(node):
+            count = len(node.get("bookmarks", []))
+            for child in node.get("children", {}).values():
+                count += count_bookmarks(child)
+            return count
+
+        total_bookmarks_in_subtree = count_bookmarks(child_tree)
+
+        with st.expander(f"{' ' * level * 2}📁 {folder_name} ({total_bookmarks_in_subtree}件)"):
+            render_tree_recursively(child_tree, level + 1)
+
+
+# --- ✨新規追加: 改善された一覧表示関数 ---
+
+
+def display_scrollable_bookmark_list(bookmarks: List[Bookmark], duplicates: Dict):
+    """
+    スクロール可能なコンテナ内に全件表示するブックマーク一覧
+    """
+    st.markdown(
+        """
+    <style>
+    .bookmark-list-container {
+        height: 600px;
+        overflow-y: auto;
+        border: 1px solid #e6e6e6;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
     )
 
-    # フォルダグループの詳細をログ出力
-    for folder_key, bookmarks_in_folder in list(folder_groups.items())[:5]:
-        folder_name = " > ".join(folder_key) if folder_key else "ルート"
-        logger.info(
-            f"フォルダ '{folder_name}': {len(bookmarks_in_folder)}個のブックマーク"
-        )
+    if "selected_urls" not in st.session_state:
+        st.session_state.selected_urls = {b.url for b in bookmarks}
 
-    # フォルダパスでソート（ルートフォルダを最初に）
-    sorted_groups = dict(sorted(folder_groups.items(), key=lambda x: (len(x[0]), x[0])))
+    # 全選択/解除
+    all_selected = len(st.session_state.selected_urls) == len(bookmarks)
+    if st.checkbox("すべて選択/解除", value=all_selected, key="select_all_list"):
+        new_state = not all_selected
+        if new_state:
+            st.session_state.selected_urls.update(b.url for b in bookmarks)
+        else:
+            st.session_state.selected_urls.clear()
+        st.rerun()
 
-    return sorted_groups
+    st.markdown('<div class="bookmark-list-container">', unsafe_allow_html=True)
 
+    duplicate_urls = set(duplicates.get("urls", []))
 
-def display_bookmark_tree(
-    bookmarks: List[Bookmark],
-    folder_groups: Dict[tuple, List[Bookmark]],
-    duplicates: Dict,
-):
-    """改善されたツリー表示機能"""
-    st.write("### 📁 フォルダ別ブックマーク表示")
+    for bookmark in bookmarks:
+        is_selected = bookmark.url in st.session_state.selected_urls
+        is_duplicate = bookmark.url in duplicate_urls
 
-    # デバッグ情報を表示
-    st.write(f"🔍 デバッグ: 総ブックマーク数 = {len(bookmarks)}")
-    st.write(f"🔍 デバッグ: フォルダグループ数 = {len(folder_groups)}")
+        icon = "🔄" if is_duplicate else "📄"
+        folder_path_str = " > ".join(bookmark.folder_path) if bookmark.folder_path else "ルート"
 
-    # 全体のフォルダパス統計
-    total_with_folder = sum(
-        1 for b in bookmarks if hasattr(b, "folder_path") and b.folder_path
-    )
-    total_without_folder = len(bookmarks) - total_with_folder
-    st.write(
-        f"🔍 デバッグ: 全体統計 - フォルダパスあり: {total_with_folder}, フォルダパスなし: {total_without_folder}"
-    )
+        # UIをコンテナでまとめる
+        with st.container():
+            col1, col2 = st.columns([0.1, 0.9])
+            with col1:
+                new_is_selected = st.checkbox(
+                    "", value=is_selected, key=f"cb_{bookmark.url}", label_visibility="collapsed"
+                )
+            with col2:
+                st.markdown(f"**{icon} {bookmark.title}**")
+                st.caption(f"📁 {folder_path_str}")
+                # URLはクリック可能なリンクにする
+                st.markdown(
+                    f"<a href='{bookmark.url}' target='_blank' style='font-size: small;'>{bookmark.url[:80]}...</a>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown("---")
 
-    # 最初の10件のブックマークのフォルダパス情報を確認
-    if bookmarks:
-        st.write("🔍 デバッグ: 最初の10件のフォルダパス情報:")
-        folder_path_stats = {"empty": 0, "has_path": 0}
-
-        for i, bookmark in enumerate(bookmarks[:10]):
-            if hasattr(bookmark, "folder_path"):
-                if bookmark.folder_path:
-                    folder_path_stats["has_path"] += 1
-                    st.write(
-                        f"  {i + 1}. {bookmark.title[:30]}... → {bookmark.folder_path}"
-                    )
-                else:
-                    folder_path_stats["empty"] += 1
-                    st.write(f"  {i + 1}. {bookmark.title[:30]}... → 空のフォルダパス")
+        if new_is_selected != is_selected:
+            if new_is_selected:
+                st.session_state.selected_urls.add(bookmark.url)
             else:
-                st.write(f"  {i + 1}. {bookmark.title[:30]}... → folder_path属性なし")
-
-        st.write(
-            f"🔍 デバッグ: フォルダパス統計 - 空: {folder_path_stats['empty']}, あり: {folder_path_stats['has_path']}"
-        )
-
-    # フォルダパスの詳細分析
-    if bookmarks:
-        folder_path_types = {}
-        for b in bookmarks[:100]:  # 最初の100件を分析
-            if hasattr(b, "folder_path"):
-                if b.folder_path is None:
-                    folder_path_types["None"] = folder_path_types.get("None", 0) + 1
-                elif isinstance(b.folder_path, list):
-                    if len(b.folder_path) == 0:
-                        folder_path_types["空リスト"] = (
-                            folder_path_types.get("空リスト", 0) + 1
-                        )
-                    else:
-                        folder_path_types["有効リスト"] = (
-                            folder_path_types.get("有効リスト", 0) + 1
-                        )
-                else:
-                    folder_path_types[f"その他({type(b.folder_path).__name__})"] = (
-                        folder_path_types.get(
-                            f"その他({type(b.folder_path).__name__})", 0
-                        )
-                        + 1
-                    )
-            else:
-                folder_path_types["属性なし"] = folder_path_types.get("属性なし", 0) + 1
-
-        st.write(f"🔍 デバッグ: フォルダパス型分析 (最初の100件): {folder_path_types}")
-
-    # セッション状態の初期化
-    if "selected_bookmarks" not in st.session_state:
-        st.session_state.selected_bookmarks = []
-
-    # 全選択/全解除ボタン
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("✅ 全選択", key="select_all_tree_folder"):
-            st.session_state.selected_bookmarks = bookmarks.copy()
+                st.session_state.selected_urls.discard(bookmark.url)
             st.rerun()
 
-    with col2:
-        if st.button("❌ 全解除", key="deselect_all_tree_folder"):
-            st.session_state.selected_bookmarks = []
-            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def display_bookmark_list_only(bookmarks: List[Bookmark], duplicates: Dict):
-    """
-    改善されたブックマーク一覧表示機能
+    """ブックマーク一覧表示とプレビュー機能"""
+    st.write("### 📄 ブックマーク一覧")
 
-    要件:
-    - 表示ロジックの修正
-    - プレビュー機能の連携改善
-    - 表示エラー時の適切なメッセージ表示
-    """
-    try:
-        st.write("### 📄 ブックマーク一覧")
+    # --- ✨修正点: Markdownプレビュー機能を追加 ---
+    if "preview_content" not in st.session_state:
+        st.session_state.preview_content = None
+    if "preview_bookmark_url" not in st.session_state:
+        st.session_state.preview_bookmark_url = None
 
-        # 入力データの検証
-        if not bookmarks:
-            st.warning("📝 表示するブックマークがありません。")
-            return
+    col1, col2 = st.columns([2, 1])
 
-        if not isinstance(bookmarks, list):
-            st.error("❌ ブックマークデータの形式が正しくありません。")
-            return
+    with col1:
+        # (一覧表示のロジックは簡略化のため、元のコードを流用)
+        for bookmark in bookmarks[:20]:  # パフォーマンスのため20件に制限
+            is_duplicate = any(bookmark.url == dup_url for dup_url in duplicates.get("urls", []))
+            label = f"{'🔄' if is_duplicate else '📄'} {bookmark.title}"
 
-        # セッション状態の初期化（エラーハンドリング付き）
-        _initialize_bookmark_list_session_state()
+            # プレビューボタン
+            if st.button(label, key=f"btn_{bookmark.url}"):
+                st.session_state.preview_bookmark_url = bookmark.url
+                st.session_state.preview_content = None  # プレビューをリセット
 
-        # 表示設定コントロール
-        _display_list_controls(bookmarks)
+    with col2:
+        if st.session_state.preview_bookmark_url:
+            # プレビュー対象のブックマークを検索
+            preview_bookmark = next((b for b in bookmarks if b.url == st.session_state.preview_bookmark_url), None)
+            if preview_bookmark:
+                st.subheader("👁️ Markdownプレビュー")
+                st.markdown(f"**{preview_bookmark.title}**")
 
-        # フィルタリングとソート
-        try:
-            filtered_bookmarks = _apply_bookmark_filters(bookmarks, duplicates)
-            sorted_bookmarks = _apply_bookmark_sorting(filtered_bookmarks)
-        except Exception as e:
-            st.error(f"❌ ブックマークの処理中にエラーが発生しました: {str(e)}")
-            logger.error(f"ブックマーク処理エラー: {e}")
-            sorted_bookmarks = bookmarks  # フォールバック
+                # プレビュー生成（キャッシュ利用）
+                if st.session_state.preview_content is None:
+                    with st.spinner("プレビューを生成中..."):
+                        # スクレイピングは行わず、基本情報のみでプレビュー
+                        generator = MarkdownGenerator()
+                        # 空のpage_dataを渡して、ブックマーク情報のみのMarkdownを生成
+                        markdown = generator.generate_obsidian_markdown({}, preview_bookmark)
+                        st.session_state.preview_content = markdown
 
-        # ページネーション
-        try:
-            paginated_bookmarks = _apply_pagination(sorted_bookmarks)
-        except Exception as e:
-            st.warning(f"⚠️ ページネーション処理でエラーが発生しました: {str(e)}")
-            paginated_bookmarks = sorted_bookmarks[:20]  # 最初の20件のみ表示
-
-        # ブックマーク一覧の表示
-        _display_bookmark_items(paginated_bookmarks, duplicates)
-
-        # プレビュー機能の統合
-        _display_integrated_preview()
-
-    except Exception as e:
-        st.error(f"❌ ブックマーク一覧表示中にエラーが発生しました: {str(e)}")
-        logger.error(f"display_bookmark_list_only エラー: {e}")
-
-        # フォールバック表示
-        _display_simple_bookmark_fallback(bookmarks)
+                st.markdown("---")
+                st.code(st.session_state.preview_content, language="markdown")
+                if st.button("プレビューを閉じる"):
+                    st.session_state.preview_bookmark_url = None
+                    st.session_state.preview_content = None
+                    st.rerun()
 
 
 def _initialize_bookmark_list_session_state():
@@ -795,9 +722,7 @@ def _display_list_controls(bookmarks: List[Bookmark]):
             sort_field = st.selectbox(
                 "📊 ソート",
                 sort_options,
-                index=sort_options.index(
-                    st.session_state.bookmark_sort.get("field", "title")
-                ),
+                index=sort_options.index(st.session_state.bookmark_sort.get("field", "title")),
                 key="bookmark_sort_field",
             )
             st.session_state.bookmark_sort["field"] = sort_field
@@ -817,9 +742,7 @@ def _display_list_controls(bookmarks: List[Bookmark]):
             items_per_page = st.selectbox(
                 "📄 表示件数",
                 [10, 20, 50, 100],
-                index=[10, 20, 50, 100].index(
-                    st.session_state.pagination.get("items_per_page", 20)
-                ),
+                index=[10, 20, 50, 100].index(st.session_state.pagination.get("items_per_page", 20)),
                 key="items_per_page_select",
             )
             st.session_state.pagination["items_per_page"] = items_per_page
@@ -829,9 +752,7 @@ def _display_list_controls(bookmarks: List[Bookmark]):
         logger.error(f"コントロール表示エラー: {e}")
 
 
-def _apply_bookmark_filters(
-    bookmarks: List[Bookmark], duplicates: Dict
-) -> List[Bookmark]:
+def _apply_bookmark_filters(bookmarks: List[Bookmark], duplicates: Dict) -> List[Bookmark]:
     """ブックマークにフィルターを適用"""
     try:
         filtered_bookmarks = bookmarks.copy()
@@ -843,20 +764,15 @@ def _apply_bookmark_filters(
             filtered_bookmarks = [
                 bookmark
                 for bookmark in filtered_bookmarks
-                if search_term in bookmark.title.lower()
-                or search_term in bookmark.url.lower()
+                if search_term in bookmark.title.lower() or search_term in bookmark.url.lower()
             ]
 
         # 重複フィルター
         if not filters.get("show_duplicates", True):
-            duplicate_files = (
-                duplicates.get("files", []) if isinstance(duplicates, dict) else []
-            )
+            duplicate_files = duplicates.get("files", []) if isinstance(duplicates, dict) else []
             duplicate_paths = set(duplicate_files)
             filtered_bookmarks = [
-                bookmark
-                for bookmark in filtered_bookmarks
-                if not _is_bookmark_duplicate(bookmark, duplicate_paths)
+                bookmark for bookmark in filtered_bookmarks if not _is_bookmark_duplicate(bookmark, duplicate_paths)
             ]
 
         return filtered_bookmarks
@@ -884,9 +800,7 @@ def _apply_bookmark_sorting(bookmarks: List[Bookmark]) -> List[Bookmark]:
                 reverse=reverse,
             )
         elif field == "date":
-            return sorted(
-                bookmarks, key=lambda b: b.add_date or datetime.min, reverse=reverse
-            )
+            return sorted(bookmarks, key=lambda b: b.add_date or datetime.min, reverse=reverse)
         else:
             return bookmarks
 
@@ -961,9 +875,7 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
     """ブックマークアイテムを表示"""
     try:
         # duplicatesの構造を確認してから処理
-        duplicate_files = (
-            duplicates.get("files", []) if isinstance(duplicates, dict) else []
-        )
+        duplicate_files = duplicates.get("files", []) if isinstance(duplicates, dict) else []
         # duplicate_filesは文字列のリストなので、URLではなくファイルパスとして扱う
         duplicate_paths = set(duplicate_files)
         selected_bookmarks = st.session_state.get("selected_bookmarks", [])
@@ -971,12 +883,8 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
         for i, bookmark in enumerate(bookmarks):
             # デバッグ: ブックマークの型をチェック
             if not hasattr(bookmark, "title"):
-                st.error(
-                    f"❌ 無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
-                )
-                logger.error(
-                    f"無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}"
-                )
+                st.error(f"❌ 無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}")
+                logger.error(f"無効なブックマークオブジェクト: {type(bookmark)} - {bookmark}")
                 continue
             # 重複チェック（ファイルパスベース）
             folder_path = "/".join(bookmark.folder_path) if bookmark.folder_path else ""
@@ -1005,17 +913,11 @@ def _display_bookmark_items(bookmarks: List[Bookmark], duplicates: Dict):
                     if selected and not is_selected:
                         st.session_state.selected_bookmarks.append(bookmark)
                     elif not selected and is_selected:
-                        st.session_state.selected_bookmarks = [
-                            b for b in selected_bookmarks if b.url != bookmark.url
-                        ]
+                        st.session_state.selected_bookmarks = [b for b in selected_bookmarks if b.url != bookmark.url]
 
                 with col2:
                     # ブックマーク情報表示
-                    title_display = (
-                        bookmark.title[:60] + "..."
-                        if len(bookmark.title) > 60
-                        else bookmark.title
-                    )
+                    title_display = bookmark.title[:60] + "..." if len(bookmark.title) > 60 else bookmark.title
 
                     if is_duplicate:
                         st.markdown(f"🔄 **{title_display}** *(重複)*")
@@ -1058,19 +960,13 @@ def _display_integrated_preview():
                     col1, col2 = st.columns([4, 1])
 
                     with col1:
-                        st.markdown(
-                            f"**📎 URL:** [{preview_bookmark.url}]({preview_bookmark.url})"
-                        )
+                        st.markdown(f"**📎 URL:** [{preview_bookmark.url}]({preview_bookmark.url})")
 
                         if preview_bookmark.folder_path:
-                            st.markdown(
-                                f"**📁 フォルダ:** {' > '.join(preview_bookmark.folder_path)}"
-                            )
+                            st.markdown(f"**📁 フォルダ:** {' > '.join(preview_bookmark.folder_path)}")
 
                         if preview_bookmark.add_date:
-                            st.markdown(
-                                f"**📅 追加日時:** {preview_bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}"
-                            )
+                            st.markdown(f"**📅 追加日時:** {preview_bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
                     with col2:
                         if st.button("❌ プレビューを閉じる", key="close_preview"):
@@ -1130,9 +1026,7 @@ def _display_markdown_preview(bookmark):
                 try:
                     # Markdownを生成
                     page_data = scraped_data if scraped_data else {}
-                    markdown_content = generator.generate_obsidian_markdown(
-                        page_data, bookmark
-                    )
+                    markdown_content = generator.generate_obsidian_markdown(page_data, bookmark)
 
                     # 生成されたMarkdownの検証
                     if not markdown_content or not isinstance(markdown_content, str):
@@ -1200,9 +1094,7 @@ def _display_markdown_preview(bookmark):
         logger.error(f"Markdownプレビューエラー: {e}")
 
         # デバッグ情報を表示（開発時のみ）
-        if st.checkbox(
-            "🔍 デバッグ情報を表示", key=f"debug_{hash(bookmark.url) % 10000}"
-        ):
+        if st.checkbox("🔍 デバッグ情報を表示", key=f"debug_{hash(bookmark.url) % 10000}"):
             st.code(f"エラー詳細: {str(e)}\nブックマーク: {bookmark}", language="text")
 
 
@@ -1210,9 +1102,7 @@ def _display_simple_bookmark_fallback(bookmarks: List[Bookmark]):
     """シンプルなフォールバック表示"""
     try:
         st.markdown("### 📄 シンプル表示モード")
-        st.info(
-            "⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。"
-        )
+        st.info("⚠️ 通常の表示でエラーが発生したため、シンプル表示モードに切り替えました。")
 
         for i, bookmark in enumerate(bookmarks[:10]):  # 最初の10件のみ
             st.markdown(f"**{i + 1}.** [{bookmark.title}]({bookmark.url})")
@@ -1234,9 +1124,7 @@ def display_bookmark_structure_tree(
 
     # 統計情報の計算
     total_files = sum(len(files) for files in directory_structure.values())
-    duplicate_files_list = (
-        duplicates.get("files", []) if isinstance(duplicates, dict) else []
-    )
+    duplicate_files_list = duplicates.get("files", []) if isinstance(duplicates, dict) else []
     duplicate_files = len(duplicate_files_list)
 
     # 統計表示
@@ -1270,17 +1158,13 @@ def show_page_preview(bookmark: Bookmark, index: int):
             st.markdown(f"**📁 フォルダ:** {' > '.join(bookmark.folder_path)}")
 
         if bookmark.add_date:
-            st.markdown(
-                f"**📅 追加日時:** {bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            st.markdown(f"**📅 追加日時:** {bookmark.add_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 # ===== ファイル保存関数 =====
 
 
-def save_selected_pages_enhanced(
-    selected_bookmarks: List[Bookmark], output_directory: Path
-):
+def save_selected_pages_enhanced(selected_bookmarks: List[Bookmark], output_directory: Path):
     """強化されたファイル保存機能"""
     if not selected_bookmarks:
         st.warning("保存するブックマークが選択されていません。")
@@ -1319,29 +1203,21 @@ def save_selected_pages_enhanced(
                 # 進捗更新
                 progress = (i + 1) / stats["total"]
                 progress_bar.progress(progress)
-                status_text.text(
-                    f"📄 処理中: {bookmark.title[:50]}... ({i + 1}/{stats['total']})"
-                )
+                status_text.text(f"📄 処理中: {bookmark.title[:50]}... ({i + 1}/{stats['total']})")
 
                 # Webページの取得
                 html_content = scraper.fetch_page_content(bookmark.url)
 
                 if html_content:
                     # 記事内容の抽出
-                    article_data = scraper.extract_article_content(
-                        html_content, bookmark.url
-                    )
+                    article_data = scraper.extract_article_content(html_content, bookmark.url)
 
                     if article_data:
                         # Markdownの生成
-                        markdown_content = generator.generate_obsidian_markdown(
-                            article_data, bookmark
-                        )
+                        markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
 
                         # ファイルパスの生成
-                        file_path = generator.generate_file_path(
-                            bookmark, output_directory
-                        )
+                        file_path = generator.generate_file_path(bookmark, output_directory)
 
                         # ディレクトリの作成
                         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1418,15 +1294,11 @@ def save_selected_pages(selected_bookmarks: List[Bookmark], output_directory: Pa
 
             if html_content:
                 # コンテンツ抽出
-                article_data = scraper.extract_article_content(
-                    html_content, bookmark.url
-                )
+                article_data = scraper.extract_article_content(html_content, bookmark.url)
 
                 if article_data:
                     # Markdown生成
-                    markdown_content = generator.generate_obsidian_markdown(
-                        article_data, bookmark
-                    )
+                    markdown_content = generator.generate_obsidian_markdown(article_data, bookmark)
 
                     # ファイル保存
                     file_path = generator.generate_file_path(bookmark, output_directory)
