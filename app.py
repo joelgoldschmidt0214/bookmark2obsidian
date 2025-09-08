@@ -33,8 +33,6 @@ from ui.components import (
 )
 from ui.progress_display import ProgressDisplay
 
-st.set_page_config(layout="wide")
-
 # Task 10: 強化されたログ設定とエラーログ記録機能
 # 環境変数DEBUG=1を設定するとデバッグログも表示
 log_level = logging.DEBUG if os.getenv("DEBUG") == "1" else logging.INFO
@@ -409,7 +407,7 @@ def main():
     st.set_page_config(
         page_title="Bookmark to Obsidian Converter",
         page_icon="📚",
-        layout="centered",
+        layout="wide",
         initial_sidebar_state="expanded",
     )
 
@@ -866,24 +864,20 @@ def main():
 
                             # 2カラムレイアウトでページ一覧とプレビューを表示
                             st.markdown("---")
-                            col1, col2 = st.columns([2, 1])
+                            st.header("📄 ブックマーク一覧")
+                            display_bookmark_list_only(bookmarks, duplicates)
 
-                            with col1:
-                                st.header("📄 ブックマーク一覧")
-                                display_bookmark_list_only(bookmarks, duplicates)
-
-                            with col2:
-                                st.header("🔍 プレビュー")
-                                if (
-                                    "preview_bookmark" in st.session_state
-                                    and "preview_index" in st.session_state
-                                ):
-                                    show_page_preview(
-                                        st.session_state["preview_bookmark"],
-                                        st.session_state["preview_index"],
-                                    )
-                                else:
-                                    st.info("📄 ページを選択してプレビューを表示")
+                            st.header("🔍 プレビュー")
+                            if (
+                                "preview_bookmark" in st.session_state
+                                and "preview_index" in st.session_state
+                            ):
+                                show_page_preview(
+                                    st.session_state["preview_bookmark"],
+                                    st.session_state["preview_index"],
+                                )
+                            else:
+                                st.info("📄 ページを選択してプレビューを表示")
 
                     else:
                         st.warning("⚠️ 有効なブックマークが見つかりませんでした。")
