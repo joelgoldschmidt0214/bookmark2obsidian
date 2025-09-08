@@ -33,6 +33,8 @@ from ui.components import (
 )
 from ui.progress_display import ProgressDisplay
 
+st.set_page_config(layout="wide")
+
 # Task 10: 強化されたログ設定とエラーログ記録機能
 # 環境変数DEBUG=1を設定するとデバッグログも表示
 log_level = logging.DEBUG if os.getenv("DEBUG") == "1" else logging.INFO
@@ -418,22 +420,10 @@ def main():
     .main .block-container {
         padding-left: 1rem;
         padding-right: 1rem;
-        max-width: 100%;
+        width: 100%;
         margin-right: 0;
     }
-    
-    /* 右側の余白を完全に除去 */
-    .stApp > div {
-        padding-right: 0 !important;
-        margin-right: 0 !important;
-    }
-    
-    /* コンテナの右側余白を除去 */
-    .css-1d391kg, .css-18e3th9 {
-        padding-right: 0 !important;
-        margin-right: 0 !important;
-    }
-    
+       
     .stTabs [data-baseweb="tab-list"] {
         gap: 2px;
     }
