@@ -1123,7 +1123,7 @@ def _display_markdown_preview(bookmark):
                 if enable_scraping:
                     try:
                         scraper = WebScraper()
-                        scraped_data = scraper.scrape_page(bookmark.url)
+                        scraped_data = scraper.fetch_page_content(bookmark.url)
                     except Exception as e:
                         st.warning(f"⚠️ Webページの取得に失敗しました: {str(e)}")
 
