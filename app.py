@@ -587,19 +587,15 @@ def main():
             "file_validated", False
         ) and st.session_state.get("directory_validated", False)
 
-        if ready_to_proceed:
-            # ブックマーク解析の実行
-            if st.session_state.get("start_analysis", False):
-                st.markdown("### 📊 ブックマーク解析結果")
+        # ブックマーク解析の実行
+        if st.session_state.get("start_analysis", False):
+            # --- ▼ここからが修正箇所です▼ ---
 
+            # Step 1: 重い処理（初回実行時のみ）
+            # セッションに解析結果がない場合のみ、解析、スキャン、重複チェックを実行
+            if "bookmarks" not in st.session_state:
                 try:
-                    # ファイル内容を読み取り
-                    uploaded_file = st.session_state["uploaded_file"]
-                    content = uploaded_file.read().decode("utf-8")
-                    uploaded_file.seek(0)  # ファイルポインタをリセット
-
-                    # ブックマーク解析の実行
-                    # プログレスバーとログ表示の改善
+                    # プログレスバーとログ表示の準備
                     progress_container = st.container()
                     log_container = st.container()
 
@@ -618,275 +614,170 @@ def main():
                                 "📝 処理ログ", "\n".join(logs[-10:]), height=200
                             )
 
-                        # ステップ1: ブックマーク解析
+                        # --- ここから重い処理が始まります ---
                         status_text.text("📊 ブックマークファイルを解析中...")
                         progress_bar.progress(0.1)
-
                         start_time = time.time()
                         add_log("📊 ブックマーク解析を開始...")
 
+                        # ファイル内容を読み取り
+                        uploaded_file = st.session_state["uploaded_file"]
+                        content = uploaded_file.read().decode("utf-8")
+                        uploaded_file.seek(0)  # ファイルポインタをリセット
+
                         # 最適化されたブックマーク解析の実行
                         cache_manager = CacheManager()
-                        force_reanalysis = st.session_state.get(
-                            "force_reanalysis", False
-                        )
-
-                        # 強制再解析の場合はキャッシュを無効化
-                        if force_reanalysis:
-                            st.session_state["cache_enabled"] = False
-                            add_log("🔄 強制再解析モード: キャッシュを無効化")
-
-                        # 最適化された解析を実行
                         bookmarks, cache_hit, analysis_stats = (
                             execute_optimized_bookmark_analysis(
                                 content, cache_manager, add_log
                             )
                         )
 
-                        # キャッシュ結果の表示
-                        if cache_hit:
-                            _display_cache_hit_results(bookmarks, cache_hit)
-                        else:
-                            _display_cache_miss_flow(bookmarks)
-
-                        # セッション状態に保存
-                        st.session_state["bookmarks"] = bookmarks
-                        st.session_state["parser"] = BookmarkParser()
-                        st.session_state["analysis_stats"] = analysis_stats
-
-                        # ステップ2: ディレクトリスキャン
+                        # ディレクトリスキャン
                         status_text.text("📂 既存ファイルをスキャン中...")
                         progress_bar.progress(0.3)
-
-                        scan_start = time.time()
                         output_directory = st.session_state["output_directory"]
                         add_log(f"📂 ディレクトリスキャン開始: {output_directory}")
-
                         directory_manager = LocalDirectoryManager(output_directory)
-                        add_log("🔍 ディレクトリ構造を解析中...")
-                        add_log("📁 サブディレクトリを再帰的にスキャン中...")
-                        add_log("📄 Markdownファイルを検索中...")
-
-                        # 既存ディレクトリ構造をスキャン
                         existing_structure = directory_manager.scan_directory()
-                        total_existing_files = sum(
-                            len(files) for files in existing_structure.values()
-                        )
 
-                        scan_time = time.time() - scan_start
-                        add_log(
-                            f"📁 既存ファイル検出: {total_existing_files}個のMarkdownファイル ({scan_time:.2f}秒)"
-                        )
-
-                        if existing_structure:
-                            add_log(f"📊 ディレクトリ数: {len(existing_structure)}個")
-
-                        # ステップ3: 重複チェック
+                        # 重複チェック
                         status_text.text("🔄 重複ファイルをチェック中...")
                         progress_bar.progress(0.6)
-
-                        dup_start = time.time()
                         add_log("🔄 重複チェック開始...")
-                        add_log(f"🔍 {len(bookmarks)}個のブックマークをチェック中...")
-
-                        # 重複チェックの詳細進捗
-                        batch_size = max(1, len(bookmarks) // 10)  # 10%ずつ進捗表示
-                        for i in range(0, len(bookmarks), batch_size):
-                            batch_end = min(i + batch_size, len(bookmarks))
-                            progress_percent = (batch_end / len(bookmarks)) * 100
-                            add_log(
-                                f"📊 重複チェック進捗: {batch_end}/{len(bookmarks)} ({progress_percent:.0f}%)"
-                            )
-                            time.sleep(0.1)  # 進捗表示のための短い待機
-
                         duplicates = directory_manager.compare_with_bookmarks(bookmarks)
 
-                        dup_time = time.time() - dup_start
-                        add_log(
-                            f"🔄 重複チェック完了: {len(duplicates['files'])}個の重複ファイルを検出 ({dup_time:.2f}秒)"
-                        )
-
-                        # ステップ4: 特殊ケース分析
+                        # 特殊ケース分析
                         status_text.text("🔍 特殊ケースを分析中...")
                         progress_bar.progress(0.8)
-
-                        edge_start = time.time()
                         add_log("🔍 特殊ケース分析開始...")
-                        add_log("🔍 URL形式とタイトルを検証中...")
-
-                        # 特殊ケース分析の詳細進捗
-                        batch_size = max(1, len(bookmarks) // 5)  # 20%ずつ進捗表示
-                        for i in range(0, len(bookmarks), batch_size):
-                            batch_end = min(i + batch_size, len(bookmarks))
-                            progress_percent = (batch_end / len(bookmarks)) * 100
-                            add_log(
-                                f"🔍 特殊ケース分析進捗: {batch_end}/{len(bookmarks)} ({progress_percent:.0f}%)"
-                            )
-                            time.sleep(0.05)  # 進捗表示のための短い待機
-
                         edge_case_result = handle_edge_cases_and_errors(bookmarks)
 
-                        edge_time = time.time() - edge_start
-                        add_log(
-                            f"🔍 特殊ケース分析完了: {edge_case_result['statistics']['valid_bookmarks']}個の有効なブックマークを検出 ({edge_time:.2f}秒)"
-                        )
-
-                        # ステップ5: 完了
+                        # 完了
                         status_text.text("✅ 解析完了")
                         progress_bar.progress(1.0)
-
                         total_time = time.time() - start_time
                         add_log(
                             f"✅ すべての解析が完了しました (総時間: {total_time:.2f}秒)"
                         )
+                        time.sleep(1)  # 少し待ってから進捗表示をクリア
+                        progress_container.empty()
 
-                        # 最終統計
-                        total_to_process = len(bookmarks) - len(duplicates["files"])
-                        add_log(
-                            f"📊 最終結果: {total_to_process}個が処理対象, {len(duplicates['files'])}個が重複除外"
-                        )
-
-                        # セッション状態に保存
+                        # ★重要★ すべての解析結果をセッション状態に保存
+                        st.session_state["bookmarks"] = bookmarks
+                        st.session_state["parser"] = BookmarkParser()
+                        st.session_state["analysis_stats"] = analysis_stats
                         st.session_state["directory_manager"] = directory_manager
                         st.session_state["existing_structure"] = existing_structure
                         st.session_state["duplicates"] = duplicates
                         st.session_state["edge_case_result"] = edge_case_result
 
-                        # 少し待ってから進捗表示をクリア
-                        time.sleep(1)
-                        progress_container.empty()
-
-                    # 解析結果の表示
-                    if bookmarks:
-                        # セッション状態からparserを取得、または新しく作成
-                        parser = st.session_state.get("parser", BookmarkParser())
-                        stats = parser.get_statistics(bookmarks)
-
-                        # 統計情報の表示
-                        directory_manager = st.session_state["directory_manager"]
-                        dir_stats = directory_manager.get_statistics()
-                        duplicates = st.session_state["duplicates"]
-
-                        logger.info("📊 統計情報:")
-                        logger.info(
-                            f"  📚 総ブックマーク数: {stats['total_bookmarks']}"
-                        )
-                        logger.info(
-                            f"  🌐 ユニークドメイン数: {stats['unique_domains']}"
-                        )
-                        logger.info(f"  📁 フォルダ数: {stats['folder_count']}")
-                        logger.info(f"  🔄 重複ファイル数: {len(duplicates['files'])}")
-
-                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                        with col_stat1:
-                            st.metric("📚 総ブックマーク数", stats["total_bookmarks"])
-                        with col_stat2:
-                            st.metric("🌐 ユニークドメイン数", stats["unique_domains"])
-                        with col_stat3:
-                            st.metric("📁 フォルダ数", stats["folder_count"])
-                        with col_stat4:
-                            st.metric("🔄 重複ファイル数", len(duplicates["files"]))
-
-                        # Task 12: 特殊ケース分析結果の表示
-                        if "edge_case_result" in st.session_state:
-                            display_edge_case_summary(
-                                st.session_state["edge_case_result"]
-                            )
-
-                        # 重複チェック結果の表示
-                        st.subheader("🔄 重複チェック結果")
-                        existing_structure = st.session_state["existing_structure"]
-
-                        if existing_structure:
-                            st.info(
-                                f"📂 既存ディレクトリから {dir_stats['total_files']} 個のMarkdownファイルを検出しました"
-                            )
-
-                            if duplicates["files"]:
-                                st.warning(
-                                    f"⚠️ {len(duplicates['files'])} 個の重複ファイルが見つかりました"
-                                )
-
-                                with st.expander("重複ファイル一覧を表示"):
-                                    for duplicate_file in duplicates["files"][
-                                        :20
-                                    ]:  # 最初の20個を表示
-                                        st.write(f"  - 🔄 {duplicate_file}")
-                                    if len(duplicates["files"]) > 20:
-                                        st.write(
-                                            f"  ... 他 {len(duplicates['files']) - 20}個"
-                                        )
-
-                                st.info(
-                                    "💡 重複ファイルは自動的に処理対象から除外されます"
-                                )
-                            else:
-                                st.success("✅ 重複ファイルは見つかりませんでした")
-                        else:
-                            st.info("📂 保存先ディレクトリは空です（新規作成）")
-
-                        # ディレクトリ構造の表示
-                        st.subheader("📂 ブックマーク構造")
-                        directory_structure = parser.extract_directory_structure(
-                            bookmarks
-                        )
-
-                        # ツリー構造で表示
-                        total_to_process, total_excluded = (
-                            display_bookmark_structure_tree(
-                                directory_structure, duplicates, directory_manager
-                            )
-                        )
-
-                        # 処理予定の統計を表示
-                        st.markdown("---")
-                        col_process1, col_process2 = st.columns(2)
-                        with col_process1:
-                            st.metric("✅ 処理予定ファイル", total_to_process)
-                        with col_process2:
-                            st.metric("🔄 除外ファイル", total_excluded)
-
-                        st.success("✅ ブックマーク解析と重複チェックが完了しました！")
-                        st.info(
-                            f"📊 {len(bookmarks)}個のブックマークが見つかり、{total_to_process}個が処理対象、{total_excluded}個が重複により除外されました。"
-                        )
-
-                        # Task 9: ページ一覧表示とプレビュー機能
-                        if total_to_process > 0:
-                            st.markdown("---")
-
-                            # ファイル保存セクション（上部に表示）
-                            display_page_list_and_preview(
-                                bookmarks,
-                                duplicates,
-                                st.session_state["output_directory"],
-                            )
-
-                            # 2カラムレイアウトでページ一覧とプレビューを表示
-                            st.markdown("---")
-                            st.header("📄 ブックマーク一覧")
-                            display_bookmark_list_only(bookmarks, duplicates)
-
-                            st.header("🔍 プレビュー")
-                            if (
-                                "preview_bookmark" in st.session_state
-                                and "preview_index" in st.session_state
-                            ):
-                                show_page_preview(
-                                    st.session_state["preview_bookmark"],
-                                    st.session_state["preview_index"],
-                                )
-                            else:
-                                st.info("📄 ページを選択してプレビューを表示")
-
-                    else:
-                        st.warning("⚠️ 有効なブックマークが見つかりませんでした。")
-
                 except Exception as e:
                     st.error(f"❌ ブックマーク解析中にエラーが発生しました: {str(e)}")
-                    st.session_state["start_analysis"] = False
+                    # エラーが発生した場合、再試行できるようにセッション状態をリセット
+                    if "start_analysis" in st.session_state:
+                        del st.session_state["start_analysis"]
+                    if "bookmarks" in st.session_state:
+                        del st.session_state["bookmarks"]
+
+            # --- Step 2: UI表示（ボタン操作などで再実行されるたびに描画）---
+            # セッションに解析結果が存在する場合にのみ、結果を表示する
+            if "bookmarks" in st.session_state:
+                # セッション状態から必要な変数を読み込む
+                bookmarks = st.session_state["bookmarks"]
+                parser = st.session_state.get("parser", BookmarkParser())
+                duplicates = st.session_state["duplicates"]
+                directory_manager = st.session_state["directory_manager"]
+
+                st.markdown("### 📊 ブックマーク解析結果")
+
+                if bookmarks:
+                    # 統計情報の表示
+                    stats = parser.get_statistics(bookmarks)
+                    dir_stats = directory_manager.get_statistics()
+                    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                    with col_stat1:
+                        st.metric("📚 総ブックマーク数", stats["total_bookmarks"])
+                    with col_stat2:
+                        st.metric("🌐 ユニークドメイン数", stats["unique_domains"])
+                    with col_stat3:
+                        st.metric("📁 フォルダ数", stats["folder_count"])
+                    with col_stat4:
+                        st.metric("🔄 重複ファイル数", len(duplicates["files"]))
+
+                    # 特殊ケース分析結果の表示
+                    if "edge_case_result" in st.session_state:
+                        display_edge_case_summary(st.session_state["edge_case_result"])
+
+                    # 重複チェック結果の表示
+                    st.subheader("🔄 重複チェック結果")
+                    if st.session_state["existing_structure"]:
+                        st.info(
+                            f"📂 既存ディレクトリから {dir_stats['total_files']} 個のMarkdownファイルを検出しました"
+                        )
+                        if duplicates["files"]:
+                            st.warning(
+                                f"⚠️ {len(duplicates['files'])} 個の重複ファイルが見つかりました"
+                            )
+                            with st.expander("重複ファイル一覧を表示"):
+                                for duplicate_file in duplicates["files"][:20]:
+                                    st.write(f"  - 🔄 {duplicate_file}")
+                                if len(duplicates["files"]) > 20:
+                                    st.write(
+                                        f"  ... 他 {len(duplicates['files']) - 20}個"
+                                    )
+                        else:
+                            st.success("✅ 重複ファイルは見つかりませんでした")
+                    else:
+                        st.info("📂 保存先ディレクトリは空です（新規作成）")
+
+                    # ディレクトリ構造の表示
+                    st.subheader("📂 ブックマーク構造")
+                    directory_structure = parser.extract_directory_structure(bookmarks)
+                    total_to_process, total_excluded = display_bookmark_structure_tree(
+                        directory_structure, duplicates, directory_manager
+                    )
+
+                    # 処理予定の統計を表示
+                    st.markdown("---")
+                    col_process1, col_process2 = st.columns(2)
+                    with col_process1:
+                        st.metric("✅ 処理予定ファイル", total_to_process)
+                    with col_process2:
+                        st.metric("🔄 除外ファイル", total_excluded)
+
+                    # ここがユーザーが指定した # Task 9 の部分です
+                    if total_to_process > 0:
+                        st.markdown("---")
+                        # ファイル保存セクション
+                        display_page_list_and_preview(
+                            bookmarks,
+                            duplicates,
+                            st.session_state["output_directory"],
+                        )
+                        st.markdown("---")
+                        # ブックマーク一覧とプレビュー（縦並び）
+                        st.header("📄 ブックマーク一覧")
+                        display_bookmark_list_only(bookmarks, duplicates)
+                        st.header("🔍 プレビュー")
+                        if (
+                            "preview_bookmark" in st.session_state
+                            and "preview_index" in st.session_state
+                        ):
+                            show_page_preview(
+                                st.session_state["preview_bookmark"],
+                                st.session_state["preview_index"],
+                            )
+                        else:
+                            st.info("📄 ページを選択してプレビューを表示")
+
+                else:
+                    st.warning("⚠️ 有効なブックマークが見つかりませんでした。")
+
+            # --- ▲ここまでが修正箇所です▲ ---
 
             else:
+                # この部分は、解析がまだ開始されていない時の表示エリアです
                 st.markdown("""
                 ✅ **ファイルアップロード**: 完了  
                 ✅ **ディレクトリ選択**: 完了  
@@ -898,15 +789,14 @@ def main():
                 6. **プレビュー**: 処理対象ページを確認・選択
                 7. **保存**: Markdownファイルとして保存
                 """)
-
-                # ファイル情報の表示
                 if "uploaded_file" in st.session_state:
-                    uploaded_file = st.session_state["uploaded_file"]
-                    st.info(f"📁 選択されたファイル: {uploaded_file.name}")
-
+                    st.info(
+                        f"📁 選択されたファイル: {st.session_state['uploaded_file'].name}"
+                    )
                 if "output_directory" in st.session_state:
-                    output_dir = st.session_state["output_directory"]
-                    st.info(f"📂 保存先ディレクトリ: {output_dir}")
+                    st.info(
+                        f"📂 保存先ディレクトリ: {st.session_state['output_directory']}"
+                    )
 
         else:
             st.markdown("""
