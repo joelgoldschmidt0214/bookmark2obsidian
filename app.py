@@ -407,8 +407,65 @@ def main():
     st.set_page_config(
         page_title="Bookmark to Obsidian Converter",
         page_icon="📚",
-        layout="wide",
+        layout="centered",
         initial_sidebar_state="expanded",
+    )
+
+    # カスタムCSSでレイアウトを最適化
+    st.markdown(
+        """
+    <style>
+    .main .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+        max-width: 100%;
+        margin-right: 0;
+    }
+    
+    /* 右側の余白を完全に除去 */
+    .stApp > div {
+        padding-right: 0 !important;
+        margin-right: 0 !important;
+    }
+    
+    /* コンテナの右側余白を除去 */
+    .css-1d391kg, .css-18e3th9 {
+        padding-right: 0 !important;
+        margin-right: 0 !important;
+    }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 4px 4px 0px 0px;
+        gap: 1px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff;
+    }
+    
+    /* プレビューエリアの最適化 */
+    .stExpander > div:first-child {
+        background-color: #f8f9fa;
+    }
+    
+    /* コードブロックの最適化 */
+    .stCodeBlock {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
     )
 
     # メインタイトル
@@ -1055,9 +1112,8 @@ def execute_optimized_bookmark_analysis(
                 # 最適化された解析実行
                 def progress_callback(current, total, message=""):
                     # 処理速度と統計情報を計算
-                    import time
 
-                    elapsed = time.time() - start_time
+                    # elapsed = time.time() - start_time  # 未使用のため削除
                     # items_per_sec = current / elapsed if elapsed > 0 else 0  # 未使用のため削除
 
                     # メモリ使用量を取得
