@@ -13,6 +13,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "psutil>=5.9.0",
     "pyyaml",
+    "streamlit-autorefresh",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -48,3 +49,18 @@ dev-dependencies = [
     "pytest-mock>=3.10.0",
     "ruff>=0.12.12",
 ]
+
+[tool.ruff]
+# Lintルールの設定
+preview = true  # プレビュー機能を有効化（空白行末尾スペース削除などが有効になる）
+line-length = 120  # Lint側の行長制限（警告用）
+
+[tool.ruff.lint]
+select = ["E", "W", "F"]  # PEP8系と未使用変数など
+fixable = ["ALL"]         # 自動修正可能なものは全部許可
+
+[tool.ruff.format]
+# フォーマッタ設定（Black互換）
+quote-style = "double"    # 文字列のクォート統一（任意）
+indent-style = "space"    # インデントはスペース
+skip-magic-trailing-comma = false
