@@ -273,10 +273,13 @@ def handle_results_state():
         return
 
     stats = st.session_state.analysis_stats
-    st.success(
-        f"解析完了！ {stats['bookmark_count']}件のブックマークを{stats['parse_time']:.2f}秒で処理しました。",
-        f" (キャッシュヒット: {stats['cache_hit']})",
+    success_message = (
+        f"解析完了！ {stats['bookmark_count']}件のブックマークを"
+        f"{stats['parse_time']:.2f}秒で処理しました。"
+        f" (キャッシュヒット: {'✅ Yes' if stats['cache_hit'] else '❌ No'})"
     )
+    # 生成した変数を渡す
+    st.success(success_message)
 
     # --- ✨修正点: st.tabsを使用してUIを整理 ---
     tab1, tab2, tab3 = st.tabs(["📊 概要", "📂 ブックマーク一覧", "⚠️ 特殊ケース"])
