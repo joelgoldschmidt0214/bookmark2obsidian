@@ -62,7 +62,7 @@ class BookmarkParser:
     def parse(self, html_content: str) -> List[Bookmark]:
         logger.info("ブックマークの解析を開始します。")
         try:
-            soup = BeautifulSoup(html_content, "lxml")
+            soup = BeautifulSoup(html_content, "html5lib")
 
             expected_count = len([a for a in soup.find_all("a") if a.has_attr("href") and a["href"]])
             logger.info(f"ファイル内に存在する有効なリンク(Aタグ)の総数: {expected_count}件")
@@ -81,18 +81,17 @@ class BookmarkParser:
             extracted_count = len(all_bookmarks)
             logger.info(f"抽出完了: {extracted_count}件のブックマークを抽出しました。")
 
-            # if extracted_count != expected_count:
-            #     error_message = (
-            #         f"抽出されたブックマーク数({extracted_count}件)がファイル内の"
-            #         f"リンク総数({expected_count}件)と一致しません。"
-            #         "HTMLの構造が予期せぬ形式であるか、パーサーのロジックに問題がある可能性があります。"
-            #     )
-            #     logger.error(error_message)
-            #     raise ValueError(error_message)
+            if extracted_count != expected_count:
+                error_message = (
+                    f"抽出されたブックマーク数({extracted_count}件)がファイル内の"
+                    f"リンク総数({expected_count}件)と一致しません。"
+                    "HTMLの構造が予期せぬ形式であるか、パーサーのロジックに問題がある可能性があります。"
+                )
+                logger.error(error_message)
+                raise ValueError(error_message)
 
             logger.info("フィルタリングを開始します。")
-            filtered_bookmarks = all_bookmarks
-            # filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
+            filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
             logger.info(f"フィルタリング完了: {len(filtered_bookmarks)}件のブックマークが残りました。")
             return filtered_bookmarks
         except Exception as e:
@@ -102,34 +101,33 @@ class BookmarkParser:
             raise ValueError(f"ブックマーク解析エラー: {str(e)}")
 
     def _parse_dl_recursively(self, dl_element: Tag, current_path: List[str], bookmarks: List[Bookmark]):
+        """
+        <dl>タグを再帰的に処理する (html5lib向けにシンプル化)
+        """
         path_str = "/".join(current_path) if current_path else "(ルート)"
         logger.debug(f"-> DL探索中: {path_str}")
 
-        for child in dl_element.find_all(["dt", "p"], recursive=False):
-            if child.name == "p":
-                nodes_to_process = child.find_all("dt", recursive=False)
-            else:
-                nodes_to_process = [child]
+        # <dl>の直接の子である<dt>だけをループ処理すれば良くなる
+        for dt_tag in dl_element.find_all("dt", recursive=False):
+            h3_tag = dt_tag.find("h3", recursive=False)
+            a_tag = dt_tag.find("a", recursive=False)
 
-            for dt_node in nodes_to_process:
-                h3_tag = dt_node.find("h3", recursive=False)
-                a_tag = dt_node.find("a", recursive=False)
+            if h3_tag:
+                # フォルダ処理 (ここは変更なし)
+                folder_name = h3_tag.get_text(strip=True)
+                logger.debug(f"  フォルダ発見: {folder_name}")
+                new_path = current_path + [html.unescape(folder_name)]
 
-                if h3_tag:
-                    folder_name = h3_tag.get_text(strip=True)
-                    logger.debug(f"  フォルダ発見: {folder_name}")
-                    new_path = current_path + [html.unescape(folder_name)]
+                # 'dt_tag'の「中」から'dl'を探す
+                nested_dl = dt_tag.find("dl", recursive=False)
+                if nested_dl:
+                    self._parse_dl_recursively(nested_dl, new_path, bookmarks)
 
-                    nested_dl = dt_node.find_next_sibling("dl")
-                    if nested_dl:
-                        self._parse_dl_recursively(nested_dl, new_path, bookmarks)
-
-                elif a_tag:
-                    all_a_tags_in_dt = dt_node.find_all("a", recursive=True)
-                    for link in all_a_tags_in_dt:
-                        if link.has_attr("href") and link["href"]:
-                            logger.debug(f"  ブックマーク発見: {link.get_text(strip=True) or link['href']}")
-                            self._create_bookmark_from_a_tag(link, current_path, bookmarks)
+            elif a_tag:
+                # <dt>直下には<a>は一つだけなので、find_allは不要
+                if a_tag.has_attr("href") and a_tag["href"]:
+                    logger.debug(f"  ブックマーク発見: {a_tag.get_text(strip=True) or a_tag['href']}")
+                    self._create_bookmark_from_a_tag(a_tag, current_path, bookmarks)
 
     def _create_bookmark_from_a_tag(self, a_tag: Tag, current_path: List[str], bookmarks: List[Bookmark]):
         try:
