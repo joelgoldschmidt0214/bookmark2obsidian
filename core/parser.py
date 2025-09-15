@@ -95,7 +95,7 @@ class BookmarkParser:
             ValueError: ブックマーク解析に失敗した場合
         """
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = BeautifulSoup(html_content, "lxml")
             bookmarks = []
 
             # ルートDLエレメントから開始
@@ -177,11 +177,14 @@ class BookmarkParser:
 
                     # ネストしたDL内のDTを除外
                     nested_dls_in_p = child.find_all("dl")
-                    nested_dt_in_p = set()
+                    # TagオブジェクトのIDを格納するsetに変更
+                    nested_dt_ids_in_p = set()
                     for nested_dl in nested_dls_in_p:
-                        nested_dt_in_p.update(nested_dl.find_all("dt"))
+                        # id() を使ってIDをsetに追加する
+                        nested_dt_ids_in_p.update(id(t) for t in nested_dl.find_all("dt"))
 
-                    p_dt_elements = [dt for dt in all_p_dts if dt not in nested_dt_in_p]
+                    # 存在チェックも id() で行う
+                    p_dt_elements = [dt for dt in all_p_dts if id(dt) not in nested_dt_ids_in_p]
                     direct_dt_elements.extend(p_dt_elements)
 
         for dt in direct_dt_elements:
@@ -451,7 +454,7 @@ class BookmarkParser:
         """
         try:
             logger.info("最適化されたブックマーク解析を開始")
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = BeautifulSoup(html_content, "lxml")
             root_dl = soup.find("dl")
             if not root_dl:
                 return []
@@ -510,11 +513,14 @@ class BookmarkParser:
                             # P要素内のDTエレメントも収集
                             all_p_dts = child.find_all("dt")
                             nested_dls_in_p = child.find_all("dl")
-                            nested_dt_in_p = set()
+                            # TagオブジェクトのIDを格納するsetに変更
+                            nested_dt_ids_in_p = set()
                             for nested_dl in nested_dls_in_p:
-                                nested_dt_in_p.update(nested_dl.find_all("dt"))
+                                # id() を使って高速な整数IDをsetに追加する
+                                nested_dt_ids_in_p.update(id(t) for t in nested_dl.find_all("dt"))
 
-                            p_dt_elements = [dt for dt in all_p_dts if dt not in nested_dt_in_p]
+                            # 存在チェックも id() で高速に行う
+                            p_dt_elements = [dt for dt in all_p_dts if id(dt) not in nested_dt_ids_in_p]
                             direct_dt_elements.extend(p_dt_elements)
 
                 for dt in direct_dt_elements:
