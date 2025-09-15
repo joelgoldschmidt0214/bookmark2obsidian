@@ -335,14 +335,12 @@ def execute_optimized_bookmark_analysis(html_content_str: str, cache_manager: Ca
                 progress_callback(1, 1, "キャッシュから読み込み完了")  # 進捗を100%に
 
         if bookmarks is None:
-            parser = BookmarkParser()
-            bookmarks = parser.parse_bookmarks_optimized(
-                html_content_str,
-                batch_size=st.session_state.get("batch_size", 100),
-                use_parallel=st.session_state.get("use_parallel_processing", True),
-                progress_callback=progress_callback,
-            )
+            parser = BookmarkParser()  # rules.ymlのパスは必要に応じて指定
+            bookmarks = parser.parse(html_content_str)
             cache_manager.save_to_cache(html_content_str, bookmarks)
+            # parseの結果をフィルタリングする必要があればここで行う
+            # filtered_bookmarks = [b for b in bookmarks if not parser._should_exclude_bookmark(b)]
+            # bookmarks = filtered_bookmarks
 
         unique_bookmarks_dict = {b.url: b for b in reversed(bookmarks)}
         bookmarks = list(unique_bookmarks_dict.values())
