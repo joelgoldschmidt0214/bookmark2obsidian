@@ -8,7 +8,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 # --- 設定 ---
-BOOKMARKS_FILE = Path("./test_data/test_bookmarks.html")
+# BOOKMARKS_FILE = Path("./test_data/test_bookmarks.html")
+BOOKMARKS_FILE = Path("./test_data/bookmarks_2025_09_06.html")
 
 
 def inspect_tree():
@@ -24,7 +25,7 @@ def inspect_tree():
     html_content = BOOKMARKS_FILE.read_text(encoding="utf-8")
 
     # lxmlパーサーでHTMLを解析
-    soup = BeautifulSoup(html_content, "lxml")
+    soup = BeautifulSoup(html_content, "html5lib")
 
     # prettify()を使って、BeautifulSoupが認識しているツリー構造を出力
     print("--- BeautifulSoupが構築した木構造 (`soup.prettify()`) ---")

@@ -9,8 +9,8 @@ from core.parser import BookmarkParser
 # sys.path.append(str(Path(__file__).parent))
 
 # ★★★ あなたのbookmarks.htmlファイルのパスを指定してください ★★★
-# BOOKMARKS_FILE = Path("./test_data/bookmarks_2025_09_06.html")
-BOOKMARKS_FILE = Path("./test_data/test_bookmarks.html")
+BOOKMARKS_FILE = Path("./test_data/bookmarks_2025_09_06.html")
+# BOOKMARKS_FILE = Path("./test_data/test_bookmarks.html")
 
 # ログ設定（コンソールにデバッグメッセージを表示するため）
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s")

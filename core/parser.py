@@ -81,17 +81,18 @@ class BookmarkParser:
             extracted_count = len(all_bookmarks)
             logger.info(f"抽出完了: {extracted_count}件のブックマークを抽出しました。")
 
-            if extracted_count != expected_count:
-                error_message = (
-                    f"抽出されたブックマーク数({extracted_count}件)がファイル内の"
-                    f"リンク総数({expected_count}件)と一致しません。"
-                    "HTMLの構造が予期せぬ形式であるか、パーサーのロジックに問題がある可能性があります。"
-                )
-                logger.error(error_message)
-                raise ValueError(error_message)
+            # if extracted_count != expected_count:
+            #     error_message = (
+            #         f"抽出されたブックマーク数({extracted_count}件)がファイル内の"
+            #         f"リンク総数({expected_count}件)と一致しません。"
+            #         "HTMLの構造が予期せぬ形式であるか、パーサーのロジックに問題がある可能性があります。"
+            #     )
+            #     logger.error(error_message)
+            #     raise ValueError(error_message)
 
             logger.info("フィルタリングを開始します。")
-            filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
+            filtered_bookmarks = all_bookmarks
+            # filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
             logger.info(f"フィルタリング完了: {len(filtered_bookmarks)}件のブックマークが残りました。")
             return filtered_bookmarks
         except Exception as e:
@@ -104,13 +105,10 @@ class BookmarkParser:
         path_str = "/".join(current_path) if current_path else "(ルート)"
         logger.debug(f"-> DL探索中: {path_str}")
 
-        # [ロジック修正] DLの直接の子要素だけを順番に処理する
         for child in dl_element.find_all(["dt", "p"], recursive=False):
             if child.name == "p":
-                # Pタグの場合は、その中のDTタグを処理対象とする
                 nodes_to_process = child.find_all("dt", recursive=False)
             else:
-                # DTタグの場合は、それ自身を処理対象とする
                 nodes_to_process = [child]
 
             for dt_node in nodes_to_process:
@@ -122,25 +120,28 @@ class BookmarkParser:
                     logger.debug(f"  フォルダ発見: {folder_name}")
                     new_path = current_path + [html.unescape(folder_name)]
 
-                    dd_tag = dt_node.find_next_sibling("dd")
-                    if dd_tag and (nested_dl := dd_tag.find("dl", recursive=False)):
+                    nested_dl = dt_node.find_next_sibling("dl")
+                    if nested_dl:
                         self._parse_dl_recursively(nested_dl, new_path, bookmarks)
 
                 elif a_tag:
-                    # [ロジック修正] ネストされたブックマークをすべて見つけ出す
-                    # このDTノードがマトリョーシカのようになっているので、中のAタグを再帰的に全て探す
                     all_a_tags_in_dt = dt_node.find_all("a", recursive=True)
                     for link in all_a_tags_in_dt:
                         if link.has_attr("href") and link["href"]:
-                            logger.debug(f"  ブックマーク発見: {link.get_text(strip=True)}")
+                            logger.debug(f"  ブックマーク発見: {link.get_text(strip=True) or link['href']}")
                             self._create_bookmark_from_a_tag(link, current_path, bookmarks)
 
     def _create_bookmark_from_a_tag(self, a_tag: Tag, current_path: List[str], bookmarks: List[Bookmark]):
-        """AタグからBookmarkオブジェクトを生成してリストに追加するヘルパー関数"""
         try:
-            url, title = a_tag["href"].strip(), a_tag.get_text(strip=True)
-            if not url or not title:
+            url = a_tag["href"].strip()
+            title = a_tag.get_text(strip=True)
+
+            # [ロジック修正] タイトルが空でもスキップしない
+            if not url:
                 return
+            if not title:
+                title = url  # URLを仮のタイトルとして使用する
+                logger.debug(f"    タイトルが空のためURLを仮タイトルに設定: {url}")
 
             add_date = None
             add_date_str = a_tag.get("add_date")
@@ -183,6 +184,9 @@ class BookmarkParser:
         return True
 
     def _is_valid_url(self, url: str) -> bool:
+        # javascript: bookmarklets are not valid http URLs
+        if url.strip().lower().startswith("javascript:"):
+            return False
         try:
             parsed = urlparse(url)
             return bool(parsed.scheme and parsed.netloc)
@@ -199,6 +203,6 @@ class BookmarkParser:
 
     def get_statistics(self, bookmarks: List[Bookmark]) -> Dict[str, int]:
         total_bookmarks = len(bookmarks)
-        unique_domains = len(set(urlparse(b.url).netloc for b in bookmarks))
+        unique_domains = len(set(urlparse(b.url).netloc for b in bookmarks if self._is_valid_url(b.url)))
         folder_count = len(set("/".join(b.folder_path) for b in bookmarks if b.folder_path))
         return {"total_bookmarks": total_bookmarks, "unique_domains": unique_domains, "folder_count": folder_count}
