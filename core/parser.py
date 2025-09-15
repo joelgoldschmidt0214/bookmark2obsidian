@@ -490,7 +490,8 @@ class BookmarkParser:
 
     def _collect_all_dt_elements(self, root_dl) -> List[Dict[str, any]]:
         """
-        すべてのDT要素を階層情報と共に収集
+        すべてのDT要素を階層情報と共に収集し、
+        後続処理に必要な情報のみを抽出した辞書のリストを返す。
 
         Args:
             root_dl: ルートDLエレメント
@@ -498,10 +499,10 @@ class BookmarkParser:
         Returns:
             List[Dict[str, any]]: DT要素と階層情報のリスト
         """
-        dt_elements = []
+        extracted_bookmarks_info = []
 
         def collect_recursive(dl_element, current_path):
-            """再帰的にDT要素を収集"""
+            """再帰的にDT要素を処理し、情報を extracted_bookmarks_info に追加する"""
             try:
                 # このDLの直接の子DTエレメントを取得
                 direct_dt_elements = []
@@ -549,24 +550,37 @@ class BookmarkParser:
                             new_path = current_path + [folder_name]
                             collect_recursive(internal_dl, new_path)
                         else:
-                            # 通常のブックマーク
+                            # ブックマーク（Aタグを持つDT）の場合
                             a_tag = dt.find("a")
-                            if a_tag:
-                                dt_elements.append({
-                                    "dt_element": dt,
-                                    "a_tag": a_tag,
-                                    "folder_path": current_path.copy(),
+                            if a_tag and a_tag.get("href"):  # aタグとhref属性があることを確認
+                                # ★★★ Tagオブジェクトを持ち出す代わりに、その場で必要な情報を全て抽出する ★★★
+                                add_date_str = a_tag.get("add_date")
+                                add_date = None
+                                if add_date_str:
+                                    try:
+                                        add_date = datetime.datetime.fromtimestamp(int(add_date_str))
+                                    except (ValueError, TypeError):
+                                        pass
+
+                                # 抽出した情報を辞書にまとめてリストに追加
+                                extracted_bookmarks_info.append({
+                                    "title": a_tag.get_text(strip=True),
+                                    "url": a_tag.get("href", "").strip(),
+                                    "folder_path": current_path.copy(),  # ディレクトリ構造を維持
+                                    "add_date": add_date,
+                                    "icon": a_tag.get("icon"),
                                 })
 
             except Exception as e:
                 logger.warning(f"DT要素収集中にエラー: {e}")
 
         collect_recursive(root_dl, [])
-        return dt_elements
+
+        return extracted_bookmarks_info
 
     def _parse_elements_batch(
         self,
-        dt_elements: List[Dict[str, any]],
+        bookmarks_info: List[Dict[str, any]],
         progress_callback: Optional[Callable[[int, int, str], None]],
         batch_size: int,
     ) -> List[Bookmark]:
@@ -574,29 +588,36 @@ class BookmarkParser:
         バッチ処理によるDT要素の解析
 
         Args:
-            dt_elements: DT要素のリスト
+            bookmarks_info: DT要素のリスト
             progress_callback: 進捗コールバック関数
             batch_size: バッチサイズ
 
         Returns:
             List[Bookmark]: 解析されたブックマークのリスト
         """
-        logger.info(f"バッチ処理開始: {len(dt_elements)}個の要素を{batch_size}個ずつ処理")
+        logger.info(f"バッチ処理開始: {len(bookmarks_info)}個の要素を{batch_size}個ずつ処理")
 
         bookmarks = []
         processed_count = 0
 
-        for i in range(0, len(dt_elements), batch_size):
-            batch = dt_elements[i : i + batch_size]
+        for i in range(0, len(bookmarks_info), batch_size):
+            batch = bookmarks_info[i : i + batch_size]
             batch_bookmarks = []
 
-            for dt_info in batch:
+            for info in batch:
                 try:
-                    bookmark = self._extract_bookmark_from_a_tag(dt_info["a_tag"], dt_info["folder_path"])
+                    # 辞書から直接Bookmarkオブジェクトを生成
+                    bookmark = Bookmark(
+                        title=info["title"],
+                        url=info["url"],
+                        folder_path=info["folder_path"],
+                        add_date=info["add_date"],
+                        icon=info["icon"],
+                    )
                     if bookmark and not self._should_exclude_bookmark(bookmark):
                         batch_bookmarks.append(bookmark)
                 except Exception as e:
-                    logger.debug(f"ブックマーク抽出エラー: {e}")
+                    logger.debug(f"ブックマーク生成エラー: {e}")
                     continue
 
             bookmarks.extend(batch_bookmarks)
@@ -604,7 +625,7 @@ class BookmarkParser:
 
             # 進捗報告
             if progress_callback:
-                progress_callback(processed_count, len(dt_elements), f"バッチ {i // batch_size + 1} 完了")
+                progress_callback(processed_count, len(bookmarks_info), f"バッチ {i // batch_size + 1} 完了")
 
             logger.debug(f"バッチ {i // batch_size + 1} 完了: {len(batch_bookmarks)}個のブックマークを抽出")
 
@@ -712,150 +733,6 @@ class BookmarkParser:
             logger.info(f"ブックマークをキャッシュに保存: {len(bookmarks)}個")
 
         return bookmarks
-
-    # def _parse_elements_parallel_enhanced(
-    #     self,
-    #     dt_elements: List[Dict[str, any]],
-    #     progress_callback: Optional[Callable[[int, int, str], None]],
-    #     batch_size: int,
-    #     max_retries: int = 3,
-    # ) -> List[Bookmark]:
-    #     """
-    #     強化された並列処理によるDT要素の解析
-
-    #     エラーハンドリング、リトライ機能、スレッドセーフティを強化した並列処理版
-
-    #     Args:
-    #         dt_elements: DT要素のリスト
-    #         progress_callback: 進捗コールバック関数
-    #         batch_size: バッチサイズ
-    #         max_retries: 最大リトライ回数
-
-    #     Returns:
-    #         List[Bookmark]: 解析されたブックマークのリスト
-    #     """
-    #     worker_count = self.performance_optimizer.get_optimal_worker_count()
-    #     logger.info(f"強化された並列処理開始: {len(dt_elements)}個の要素、{worker_count}ワーカー")
-
-    #     # スレッドセーフなデータ構造
-    #     bookmarks = []
-    #     processed_count = 0
-    #     error_count = 0
-    #     retry_queue = []
-
-    #     # ロックオブジェクト
-    #     bookmarks_lock = threading.Lock()
-    #     progress_lock = threading.Lock()
-    #     error_lock = threading.Lock()
-
-    #     def update_progress(increment=1):
-    #         """スレッドセーフな進捗更新"""
-    #         nonlocal processed_count
-    #         with progress_lock:
-    #             processed_count += increment
-    #             if progress_callback:
-    #                 try:
-    #                     progress_callback(processed_count, len(dt_elements))
-    #                 except Exception as e:
-    #                     logger.warning(f"進捗コールバックエラー: {e}")
-
-    #     def add_bookmark(bookmark):
-    #         """スレッドセーフなブックマーク追加"""
-    #         with bookmarks_lock:
-    #             bookmarks.append(bookmark)
-
-    #     def add_error():
-    #         """スレッドセーフなエラーカウント"""
-    #         nonlocal error_count
-    #         with error_lock:
-    #             error_count += 1
-
-    #     def process_dt_batch_with_retry(dt_batch, retry_count=0):
-    #         """リトライ機能付きのDT要素バッチ処理"""
-    #         batch_bookmarks = []
-    #         batch_errors = []
-
-    #         for dt_info in dt_batch:
-    #             try:
-    #                 # スレッドセーフなブックマーク抽出
-    #                 bookmark = self._thread_safe_extract_bookmark(dt_info["a_tag"], dt_info["folder_path"])
-
-    #                 if bookmark and not self._should_exclude_bookmark(bookmark):
-    #                     batch_bookmarks.append(bookmark)
-
-    #             except Exception as e:
-    #                 batch_errors.append({
-    #                     "dt_info": dt_info,
-    #                     "error": str(e),
-    #                     "retry_count": retry_count,
-    #                 })
-    #                 logger.debug(f"バッチ処理エラー (試行{retry_count + 1}): {e}")
-    #             finally:
-    #                 update_progress()
-
-    #         # 成功したブックマークを追加
-    #         for bookmark in batch_bookmarks:
-    #             add_bookmark(bookmark)
-
-    #         # エラーの処理
-    #         for error_info in batch_errors:
-    #             add_error()
-    #             if retry_count < max_retries:
-    #                 # リトライキューに追加
-    #                 with error_lock:
-    #                     retry_queue.append(error_info)
-
-    #         return len(batch_bookmarks), len(batch_errors)
-
-    #     # バッチに分割
-    #     batches = [dt_elements[i : i + batch_size] for i in range(0, len(dt_elements), batch_size)]
-
-    #     # 初回並列処理
-    #     logger.info(f"初回並列処理: {len(batches)}個のバッチを処理")
-
-    #     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-    #         future_to_batch = {executor.submit(process_dt_batch_with_retry, batch): batch for batch in batches}
-
-    #         for future in as_completed(future_to_batch):
-    #             try:
-    #                 success_count, error_count_batch = future.result()
-    #                 logger.debug(f"バッチ完了: 成功{success_count}個, エラー{error_count_batch}個")
-    #             except Exception as e:
-    #                 logger.error(f"並列処理中の予期しないエラー: {e}")
-    #                 add_error()
-
-    #     # リトライ処理
-    #     retry_attempts = 0
-    #     while retry_queue and retry_attempts < max_retries:
-    #         retry_attempts += 1
-    #         logger.info(f"リトライ処理 {retry_attempts}/{max_retries}: {len(retry_queue)}個の要素")
-
-    #         current_retry_queue = retry_queue.copy()
-    #         retry_queue.clear()
-
-    #         # リトライバッチを作成
-    #         retry_batches = [
-    #             [error_info["dt_info"] for error_info in current_retry_queue[i : i + batch_size]]
-    #             for i in range(0, len(current_retry_queue), batch_size)
-    #         ]
-
-    #         with ThreadPoolExecutor(max_workers=max(1, worker_count // 2)) as executor:
-    #             retry_futures = {
-    #                 executor.submit(process_dt_batch_with_retry, batch, retry_attempts): batch
-    #                 for batch in retry_batches
-    #             }
-
-    #             for future in as_completed(retry_futures):
-    #                 try:
-    #                     future.result()
-    #                 except Exception as e:
-    #                     logger.error(f"リトライ処理中のエラー: {e}")
-
-    #     # 最終統計
-    #     success_rate = (len(bookmarks) / len(dt_elements)) * 100 if dt_elements else 0
-    #     logger.info(f"強化された並列処理完了: {len(bookmarks)}個成功, {error_count}個エラー, 成功率{success_rate:.1f}%")
-
-    #     return bookmarks
 
     def _thread_safe_extract_bookmark(self, a_tag, folder_path: List[str]) -> Optional[Bookmark]:
         """

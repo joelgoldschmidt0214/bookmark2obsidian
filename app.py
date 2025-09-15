@@ -107,9 +107,10 @@ def display_cache_management_ui():
 def _check_file_cache_status(uploaded_file):
     """アップロードされたファイルのキャッシュ状況をチェック"""
     try:
-        content = uploaded_file.getvalue()
+        bytes_content = uploaded_file.getvalue()
+        html_content_str = bytes_content.decode("utf-8")
         cache_manager = CacheManager()
-        if cache_manager.load_from_cache(content):
+        if cache_manager.load_from_cache(html_content_str):
             st.success("🗄️ このファイルの解析結果がキャッシュに見つかりました！")
             st.session_state["cache_available"] = True
         else:
@@ -210,9 +211,10 @@ def handle_parsing_state():
     if st.session_state.analysis_future is None:
         with ThreadPoolExecutor(max_workers=1) as executor:
             st.session_state.executor = executor
-            content = st.session_state.uploaded_file.getvalue()
+            bytes_content = st.session_state.uploaded_file.getvalue()
+            html_content_str = bytes_content.decode("utf-8")
             cache_manager = CacheManager()
-            future = executor.submit(execute_optimized_bookmark_analysis, content, cache_manager)
+            future = executor.submit(execute_optimized_bookmark_analysis, html_content_str, cache_manager)
             st.session_state.analysis_future = future
 
     future = st.session_state.analysis_future
@@ -272,7 +274,8 @@ def handle_results_state():
 
     stats = st.session_state.analysis_stats
     st.success(
-        f"解析完了！ {stats['bookmark_count']}件のブックマークを{stats['parse_time']:.2f}秒で処理しました。 (キャッシュヒット: {stats['cache_hit']})"
+        f"解析完了！ {stats['bookmark_count']}件のブックマークを{stats['parse_time']:.2f}秒で処理しました。",
+        f" (キャッシュヒット: {stats['cache_hit']})",
     )
 
     # --- ✨修正点: st.tabsを使用してUIを整理 ---
@@ -312,7 +315,7 @@ def handle_results_state():
             display_edge_case_summary(st.session_state["edge_case_result"], show_details=True)
 
 
-def execute_optimized_bookmark_analysis(content: bytes, cache_manager: CacheManager):
+def execute_optimized_bookmark_analysis(html_content_str: str, cache_manager: CacheManager):
     """最適化されたブックマーク解析を実行（UI操作から分離）"""
     start_time = time.time()
     mem_monitor = MemoryMonitor()
@@ -323,11 +326,10 @@ def execute_optimized_bookmark_analysis(content: bytes, cache_manager: CacheMana
         st.session_state.progress_info = {"current": current, "total": total, "message": message}
 
     try:
-        html_content = content.decode("utf-8")
         bookmarks, cache_hit = None, False
 
         if not st.session_state.get("force_reanalysis", False):
-            cached_bookmarks = cache_manager.load_from_cache(content)
+            cached_bookmarks = cache_manager.load_from_cache(html_content_str)
             if cached_bookmarks:
                 bookmarks, cache_hit = cached_bookmarks, True
                 progress_callback(1, 1, "キャッシュから読み込み完了")  # 進捗を100%に
@@ -335,12 +337,12 @@ def execute_optimized_bookmark_analysis(content: bytes, cache_manager: CacheMana
         if bookmarks is None:
             parser = BookmarkParser()
             bookmarks = parser.parse_bookmarks_optimized(
-                html_content,
+                html_content_str,
                 batch_size=st.session_state.get("batch_size", 100),
                 use_parallel=st.session_state.get("use_parallel_processing", True),
                 progress_callback=progress_callback,
             )
-            cache_manager.save_to_cache(content, bookmarks)
+            cache_manager.save_to_cache(html_content_str, bookmarks)
 
         unique_bookmarks_dict = {b.url: b for b in reversed(bookmarks)}
         bookmarks = list(unique_bookmarks_dict.values())
