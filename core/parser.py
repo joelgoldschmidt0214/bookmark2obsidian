@@ -76,7 +76,9 @@ class BookmarkParser:
                 return []
 
             all_bookmarks = []
-            self._parse_dl_recursively(root_dl, [], all_bookmarks)
+            filtered_bookmarks = []
+            # 再帰処理に両方のリストを渡す
+            self._parse_dl_recursively(root_dl, [], all_bookmarks, filtered_bookmarks)
 
             extracted_count = len(all_bookmarks)
             logger.info(f"抽出完了: {extracted_count}件のブックマークを抽出しました。")
@@ -90,8 +92,10 @@ class BookmarkParser:
                 logger.error(error_message)
                 raise ValueError(error_message)
 
-            logger.info("フィルタリングを開始します。")
-            filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
+            # このリスト内包表記は不要になる
+            # filtered_bookmarks = [b for b in all_bookmarks if not self._should_exclude_bookmark(b)]
+            # logger.info("フィルタリングは抽出と同時に完了しました。")
+
             logger.info(f"フィルタリング完了: {len(filtered_bookmarks)}件のブックマークが残りました。")
             return filtered_bookmarks
         except Exception as e:
@@ -100,45 +104,50 @@ class BookmarkParser:
                 raise
             raise ValueError(f"ブックマーク解析エラー: {str(e)}")
 
-    def _parse_dl_recursively(self, dl_element: Tag, current_path: List[str], bookmarks: List[Bookmark]):
+    def _parse_dl_recursively(
+        self,
+        dl_element: Tag,
+        current_path: List[str],
+        all_bookmarks: List[Bookmark],
+        filtered_bookmarks: List[Bookmark],
+    ):
         """
         <dl>タグを再帰的に処理する (html5lib向けにシンプル化)
         """
         path_str = "/".join(current_path) if current_path else "(ルート)"
         logger.debug(f"-> DL探索中: {path_str}")
 
-        # <dl>の直接の子である<dt>だけをループ処理すれば良くなる
         for dt_tag in dl_element.find_all("dt", recursive=False):
             h3_tag = dt_tag.find("h3", recursive=False)
             a_tag = dt_tag.find("a", recursive=False)
 
             if h3_tag:
-                # フォルダ処理 (ここは変更なし)
                 folder_name = h3_tag.get_text(strip=True)
                 logger.debug(f"  フォルダ発見: {folder_name}")
                 new_path = current_path + [html.unescape(folder_name)]
 
-                # 'dt_tag'の「中」から'dl'を探す
                 nested_dl = dt_tag.find("dl", recursive=False)
                 if nested_dl:
-                    self._parse_dl_recursively(nested_dl, new_path, bookmarks)
+                    # 再帰呼び出しにも両方のリストを渡す
+                    self._parse_dl_recursively(nested_dl, new_path, all_bookmarks, filtered_bookmarks)
 
             elif a_tag:
-                # <dt>直下には<a>は一つだけなので、find_allは不要
                 if a_tag.has_attr("href") and a_tag["href"]:
                     logger.debug(f"  ブックマーク発見: {a_tag.get_text(strip=True) or a_tag['href']}")
-                    self._create_bookmark_from_a_tag(a_tag, current_path, bookmarks)
+                    # _create_bookmark... にも両方のリストを渡す
+                    self._create_bookmark_from_a_tag(a_tag, current_path, all_bookmarks, filtered_bookmarks)
 
-    def _create_bookmark_from_a_tag(self, a_tag: Tag, current_path: List[str], bookmarks: List[Bookmark]):
+    def _create_bookmark_from_a_tag(
+        self, a_tag: Tag, current_path: List[str], all_bookmarks: List[Bookmark], filtered_bookmarks: List[Bookmark]
+    ):
         try:
             url = a_tag["href"].strip()
             title = a_tag.get_text(strip=True)
 
-            # [ロジック修正] タイトルが空でもスキップしない
             if not url:
                 return
             if not title:
-                title = url  # URLを仮のタイトルとして使用する
+                title = url
                 logger.debug(f"    タイトルが空のためURLを仮タイトルに設定: {url}")
 
             add_date = None
@@ -146,15 +155,22 @@ class BookmarkParser:
             if add_date_str:
                 add_date = datetime.datetime.fromtimestamp(int(add_date_str))
 
-            bookmarks.append(
-                Bookmark(
-                    title=html.unescape(title),
-                    url=html.unescape(url),
-                    folder_path=current_path,
-                    add_date=add_date,
-                    icon=a_tag.get("icon"),
-                )
+            # Bookmarkオブジェクトを作成
+            bookmark = Bookmark(
+                title=html.unescape(title),
+                url=html.unescape(url),
+                folder_path=current_path,
+                add_date=add_date,
+                icon=a_tag.get("icon"),
             )
+
+            # まず all_bookmarks に無条件で追加
+            all_bookmarks.append(bookmark)
+
+            # 次にフィルタリングして、条件を満たすものだけ filtered_bookmarks に追加
+            if not self._should_exclude_bookmark(bookmark):
+                filtered_bookmarks.append(bookmark)
+
         except Exception as e:
             logger.warning(f"個別ブックマークの解析失敗: {a_tag.get_text(strip=True)} - {e}")
 
@@ -165,16 +181,16 @@ class BookmarkParser:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         path = parsed_url.path
-        if any(p.search(url) for p in self.regex_deny_patterns):
-            return True
         if domain in self.deny_domains:
             return True
         if any(k in domain for k in self.deny_subdomains):
             return True
-        if domain in self.allow_domains:
-            return self._is_domain_root_url(url)
         if self.deny_path_keywords and any(k in path for k in self.deny_path_keywords):
             return True
+        if any(p.search(url) for p in self.regex_deny_patterns):
+            return True
+        if domain in self.allow_domains:
+            return self._is_domain_root_url(url)
         if self.allow_path_keywords and any(k in path for k in self.allow_path_keywords):
             return self._is_domain_root_url(url)
         if self._is_domain_root_url(url):

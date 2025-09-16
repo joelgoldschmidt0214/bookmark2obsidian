@@ -14,7 +14,7 @@ profiler = cProfile.Profile()
 profiler.enable()
 
 # 時間を計測したい関数を実行
-parser.parse_bookmarks_optimized(html_content, use_parallel=True)
+parser.parse(html_content)
 
 profiler.disable()
 
